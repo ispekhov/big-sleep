@@ -78,6 +78,23 @@ def create_app() -> FastAPI:
             "indexed_vectors": indexed,
         }
 
+    @app.get("/debug/db", include_in_schema=False)
+    def debug_db() -> dict:
+        # Temporary diagnostic: report the real DB connection error (if any).
+        from sqlalchemy import text
+
+        from .db import engine
+
+        try:
+            with engine.connect() as conn:
+                one = conn.execute(text("select 1")).scalar()
+                vectors = conn.execute(
+                    text("select count(*) from image_vectors")
+                ).scalar()
+            return {"ok": True, "select1": one, "image_vectors": vectors}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "type": type(exc).__name__, "error": str(exc)}
+
     app.include_router(brands.router)
     app.include_router(products.router)
     app.include_router(search.router)
