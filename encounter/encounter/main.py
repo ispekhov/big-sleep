@@ -174,6 +174,24 @@ def create_app() -> FastAPI:
             "extracted": ex is not None,
             "extracted_name": ex.name if ex else None,
             "extracted_images": len(ex.image_urls) if ex else 0,
+            "body_snippet": html[:300],
+        }
+
+    @app.get("/debug/shopify", include_in_schema=False)
+    def debug_shopify(url: str) -> dict:
+        # Temporary: check whether a site exposes the Shopify products.json API.
+        from .importer.pipeline import make_http_fetcher
+
+        base = url.rstrip("/")
+        page = make_http_fetcher()(f"{base}/products.json?limit=3")
+        if page is None:
+            return {"ok": False, "error": "fetch failed"}
+        snippet = page.html[:600]
+        return {
+            "status": page.status,
+            "looks_json": page.html.lstrip().startswith("{"),
+            "len": len(page.html),
+            "snippet": snippet,
         }
 
     app.include_router(brands.router)
