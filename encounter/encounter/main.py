@@ -142,6 +142,40 @@ def create_app() -> FastAPI:
             "extraction_samples": samples,
         }
 
+    @app.get("/debug/inspect", include_in_schema=False)
+    def debug_inspect(url: str) -> dict:
+        # Temporary: inspect a single page's markup + product links.
+        from .importer.extractor import extract_product
+        from .importer.pipeline import make_http_fetcher
+        from .util import make_soup
+
+        page = make_http_fetcher()(url)
+        if page is None:
+            return {"ok": False, "error": "fetch failed"}
+        html = page.html
+        soup = make_soup(html)
+        links, seen = [], set()
+        for a in soup.find_all("a", href=True):
+            h = a["href"]
+            if "/products/" in h and h not in seen:
+                seen.add(h)
+                links.append(h)
+            if len(links) >= 25:
+                break
+        ex = extract_product(html, url)
+        return {
+            "status": page.status,
+            "html_len": len(html),
+            "jsonld_scripts": len(soup.find_all("script", type="application/ld+json")),
+            "has_product_jsonld": '"Product"' in html,
+            "has_og_image": "og:image" in html,
+            "has_next_data": "__NEXT_DATA__" in html or "__NUXT__" in html,
+            "product_links_sample": links,
+            "extracted": ex is not None,
+            "extracted_name": ex.name if ex else None,
+            "extracted_images": len(ex.image_urls) if ex else 0,
+        }
+
     app.include_router(brands.router)
     app.include_router(products.router)
     app.include_router(search.router)
