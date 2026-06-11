@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     # ENCOUNTER_FIRECRAWL_API_KEY env var, never committed.
     firecrawl_api_key: str | None = None
     firecrawl_base_url: str = "https://api.firecrawl.dev"
-    firecrawl_max_products: int = 6
+    firecrawl_max_products: int = 3
     firecrawl_timeout: float = 45.0
 
     # --- Importer / crawler ----------------------------------------------

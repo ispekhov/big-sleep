@@ -77,30 +77,19 @@ def diagnose_brand(url: str) -> dict:
 
 @router.get("/firecrawl-test")
 def firecrawl_test(url: str) -> dict:
-    """Temporary: validate the Firecrawl map+scrape integration (no persistence)."""
+    """Temporary: validate Firecrawl connectivity via a fast map() call."""
     from ..importer.firecrawl import get_firecrawl_client, looks_like_product_url
 
     client = get_firecrawl_client()
     if client is None:
-        return {"configured": False, "hint": "set ENCOUNTER_FIRECRAWL_API_KEY"}
+        return {"configured": False, "hint": "firecrawl key not found"}
     urls = client.map_urls(url)
-    product_urls = [u for u in urls if looks_like_product_url(u)][:10]
-    sample = None
-    target = product_urls[0] if product_urls else (urls[0] if urls else None)
-    if target:
-        ex = client.scrape_product(target)
-        sample = {
-            "url": target,
-            "extracted": ex is not None,
-            "name": ex.name if ex else None,
-            "price": ex.price if ex else None,
-            "images": len(ex.image_urls) if ex else 0,
-        }
+    product_urls = [u for u in urls if looks_like_product_url(u)]
     return {
         "configured": True,
         "mapped_urls": len(urls),
-        "product_urls_sample": product_urls,
-        "sample_scrape": sample,
+        "product_urls_found": len(product_urls),
+        "product_urls_sample": product_urls[:12],
     }
 
 
