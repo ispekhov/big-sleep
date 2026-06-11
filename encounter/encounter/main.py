@@ -194,6 +194,25 @@ def create_app() -> FastAPI:
             "snippet": snippet,
         }
 
+    @app.get("/debug/import", include_in_schema=False)
+    def debug_import(url: str, pages: int = 8) -> dict:
+        # Temporary: run a real import (GET-friendly) and return the summary.
+        from .db import SessionLocal
+        from .importer.pipeline import (
+            ImportPipeline,
+            make_http_downloader,
+            make_http_fetcher,
+        )
+
+        with SessionLocal() as session:
+            pipeline = ImportPipeline(
+                session,
+                fetcher=make_http_fetcher(),
+                downloader=make_http_downloader(),
+            )
+            summary = pipeline.run(url, max_pages=pages)
+        return summary.model_dump()
+
     app.include_router(brands.router)
     app.include_router(products.router)
     app.include_router(search.router)
