@@ -66,6 +66,15 @@ class Settings(BaseSettings):
     # "heuristic" (no API) or "vlm". Provider config read by the reranker.
     reranker_backend: str = "heuristic"
 
+    # --- Firecrawl (headless render + anti-bot extraction fallback) -------
+    # When set, the importer falls back to Firecrawl for sites that the free
+    # HTTP path can't read (JS-rendered or WAF-blocked). Secret — set via the
+    # ENCOUNTER_FIRECRAWL_API_KEY env var, never committed.
+    firecrawl_api_key: str | None = None
+    firecrawl_base_url: str = "https://api.firecrawl.dev"
+    firecrawl_max_products: int = 6
+    firecrawl_timeout: float = 45.0
+
     # --- Importer / crawler ----------------------------------------------
     crawl_max_pages: int = 200
     crawl_max_images_per_product: int = 8

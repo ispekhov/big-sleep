@@ -26,6 +26,7 @@ from ..util import make_soup
 from ..vectorstore import VectorStore, get_vector_store
 from .crawler import Crawler, FetchedPage, Fetcher
 from .extractor import ExtractedProduct, extract_product
+from .firecrawl import firecrawl_import, get_firecrawl_client
 from .shopify import fetch_shopify_products
 
 ImageDownloader = Callable[[str], "DownloadedImage | None"]
@@ -111,6 +112,20 @@ class ImportPipeline:
                 continue
             _ingest(extracted)
 
+        # Layer 4: Firecrawl fallback for JS-rendered / WAF-blocked sites that
+        # the free HTTP path couldn't read.
+        used_firecrawl = False
+        if products_imported == 0:
+            client = get_firecrawl_client()
+            if client is not None:
+                used_firecrawl = True
+                for ex in firecrawl_import(
+                    start_url,
+                    client,
+                    max_products=self.settings.firecrawl_max_products,
+                ):
+                    _ingest(ex)
+
         self.session.commit()
         return ImportSummary(
             brand=brand_name,
@@ -118,6 +133,11 @@ class ImportPipeline:
             images_imported=images_imported,
             products_need_review=needs_review,
             pages_crawled=crawl.pages_crawled,
+            message=(
+                "Ready for visual search (via Firecrawl)"
+                if used_firecrawl
+                else "Ready for visual search"
+            ),
         )
 
     # --- persistence ------------------------------------------------------

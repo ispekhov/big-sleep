@@ -75,6 +75,35 @@ def diagnose_brand(url: str) -> dict:
     }
 
 
+@router.get("/firecrawl-test")
+def firecrawl_test(url: str) -> dict:
+    """Temporary: validate the Firecrawl map+scrape integration (no persistence)."""
+    from ..importer.firecrawl import get_firecrawl_client, looks_like_product_url
+
+    client = get_firecrawl_client()
+    if client is None:
+        return {"configured": False, "hint": "set ENCOUNTER_FIRECRAWL_API_KEY"}
+    urls = client.map_urls(url)
+    product_urls = [u for u in urls if looks_like_product_url(u)][:10]
+    sample = None
+    target = product_urls[0] if product_urls else (urls[0] if urls else None)
+    if target:
+        ex = client.scrape_product(target)
+        sample = {
+            "url": target,
+            "extracted": ex is not None,
+            "name": ex.name if ex else None,
+            "price": ex.price if ex else None,
+            "images": len(ex.image_urls) if ex else 0,
+        }
+    return {
+        "configured": True,
+        "mapped_urls": len(urls),
+        "product_urls_sample": product_urls,
+        "sample_scrape": sample,
+    }
+
+
 @router.post("/import", response_model=ImportSummary)
 def import_brand(
     req: ImportRequest, session: Session = Depends(get_session)
