@@ -69,4 +69,4 @@ async def app(scope, receive, send):
     )
     await send({"type": "http.response.body", "body": body})
 
-# Redeploy trigger: database now uses the pooler `postgres` role + object_id search_path.
+# Redeploy trigger: corrected Supabase pooler host (aws-1-eu-north-1).
