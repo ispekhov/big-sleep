@@ -19,13 +19,14 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..embeddings import Embedder, get_embedder
 from ..enums import ImageType, SourceType, VerificationStatus
-from ..models import Brand, Image, Product, Source
+from ..models import Brand, Image, Product, Source, Variant
 from ..schemas import ImportSummary
 from ..storage import ObjectStorage, get_storage
 from ..util import make_soup
 from ..vectorstore import VectorStore, get_vector_store
 from .crawler import Crawler, FetchedPage, Fetcher
 from .extractor import ExtractedProduct, extract_product
+from .shopify import fetch_shopify_products
 
 ImageDownloader = Callable[[str], "DownloadedImage | None"]
 
@@ -73,25 +74,42 @@ class ImportPipeline:
         brand = self._get_or_create_brand(brand_name, start_url)
         source = self._get_or_create_source(brand_name, start_url)
 
-        crawler = Crawler(self.fetcher, max_pages=max_pages)
-        crawl = crawler.crawl(start_url)
-
         products_imported = 0
         images_imported = 0
         needs_review = 0
+        cap = max_pages or self.settings.crawl_max_pages
 
+        def _ingest(ex) -> None:
+            nonlocal products_imported, images_imported, needs_review
+            product, n_images, flagged = self._persist_product(brand, source, ex)
+            if product is None:
+                return
+            products_imported += 1
+            images_imported += n_images
+            needs_review += 1 if flagged else 0
+
+        # Layer 1: Shopify products.json (clean, complete) when available.
+        shopify = fetch_shopify_products(start_url, self.fetcher)
+        if shopify:
+            for ex in shopify[:cap]:
+                _ingest(ex)
+            self.session.commit()
+            return ImportSummary(
+                brand=brand_name,
+                products_imported=products_imported,
+                images_imported=images_imported,
+                products_need_review=needs_review,
+                pages_crawled=0,
+            )
+
+        # Layers 2-3: crawl + structured-markup / HTML extraction.
+        crawler = Crawler(self.fetcher, max_pages=cap)
+        crawl = crawler.crawl(start_url)
         for page in crawl.product_pages:
             extracted = extract_product(page.html, page.url)
             if extracted is None:
                 continue
-            product, n_images, flagged = self._persist_product(
-                brand, source, extracted
-            )
-            if product is None:
-                continue
-            products_imported += 1
-            images_imported += n_images
-            needs_review += 1 if flagged else 0
+            _ingest(extracted)
 
         self.session.commit()
         return ImportSummary(
@@ -158,6 +176,17 @@ class ImportPipeline:
         )
         self.session.add(product)
         self.session.flush()
+
+        for v in ex.variants[:25]:
+            self.session.add(
+                Variant(
+                    product_id=product.id,
+                    name=v.get("name") or "Default",
+                    sku=v.get("sku"),
+                    color=v.get("option"),
+                    price=v.get("price"),
+                )
+            )
 
         n_images = 0
         cap = self.settings.crawl_max_images_per_product

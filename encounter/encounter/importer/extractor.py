@@ -43,6 +43,7 @@ class ExtractedProduct:
     sku: str | None = None
     product_url: str | None = None
     image_urls: list[str] = field(default_factory=list)
+    variants: list[dict] = field(default_factory=list)
 
     @property
     def required_present(self) -> bool:
@@ -135,6 +136,26 @@ def extract_product(html: str, url: str) -> ExtractedProduct | None:
         if isinstance(jsonld.get("material"), str):
             product.materials = _clean(jsonld.get("material"))
 
+    # 1b) schema.org microdata (itemtype Product) backfill
+    if not (product.name and product.image_urls):
+        micro = soup.find(attrs={"itemtype": re.compile(r"schema\.org/Product", re.I)})
+        if micro is not None:
+            if not product.name:
+                nm = micro.find(attrs={"itemprop": "name"})
+                product.name = _clean(nm.get_text() if nm else None)
+            if not product.image_urls:
+                urls = []
+                for im in micro.find_all(attrs={"itemprop": "image"}):
+                    src = im.get("content") or im.get("src") or im.get("href")
+                    if src:
+                        urls.append(urljoin(url, src))
+                product.image_urls = urls
+            if product.price is None:
+                pr = micro.find(attrs={"itemprop": "price"})
+                if pr is not None:
+                    price, _ = _parse_price(pr.get("content") or pr.get_text())
+                    product.price = price
+
     # 2) OpenGraph backfill
     if not product.name:
         product.name = _meta(soup, "og:title") or _text(soup, "h1")
@@ -172,6 +193,12 @@ def extract_product(html: str, url: str) -> ExtractedProduct | None:
         if m:
             product.dimensions = _clean(m.group(1))
 
+    # 3b) Last-resort image scrape — only on pages that already look like a
+    # real product detail page (have a name + a price), so listing/category
+    # pages don't turn into junk products.
+    if product.name and product.price is not None and not product.image_urls:
+        product.image_urls = _scrape_images(soup, url)
+
     # Only return something if we have at least a name + an image.
     if product.name and product.image_urls:
         # de-dup images, cap handled by pipeline
@@ -204,6 +231,36 @@ def _collect_images(value, base_url: str) -> list[str]:
     elif isinstance(value, dict) and value.get("url"):
         urls = [value["url"]]
     return [urljoin(base_url, u) for u in urls if u]
+
+
+_IMG_SKIP = re.compile(
+    r"(sprite|logo|icon|favicon|placeholder|loader|spinner|pixel|blank|\.svg)",
+    re.I,
+)
+
+
+def _scrape_images(soup: BeautifulSoup, base_url: str, cap: int = 8) -> list[str]:
+    """Collect plausible product images from <img> tags (src/data-src/srcset)."""
+    urls: list[str] = []
+    seen: set[str] = set()
+    for img in soup.find_all("img"):
+        src = (
+            img.get("src")
+            or img.get("data-src")
+            or img.get("data-srcset", "").split(" ")[0]
+            or img.get("srcset", "").split(" ")[0]
+        )
+        if not src or src.startswith("data:"):
+            continue
+        if _IMG_SKIP.search(src):
+            continue
+        full = urljoin(base_url, src.strip())
+        if full not in seen:
+            seen.add(full)
+            urls.append(full)
+        if len(urls) >= cap:
+            break
+    return urls
 
 
 def _meta(soup: BeautifulSoup, prop: str) -> str | None:
