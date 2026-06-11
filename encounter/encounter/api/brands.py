@@ -33,6 +33,19 @@ def import_brand(
     return pipeline.run(req.url, max_pages=req.max_pages)
 
 
+@router.get("/import", response_model=ImportSummary)
+def import_brand_get(
+    url: str,
+    max_pages: int | None = None,
+    session: Session = Depends(get_session),
+) -> ImportSummary:
+    """GET convenience for importing a single brand (handy for batch runs)."""
+    pipeline = ImportPipeline(
+        session, fetcher=make_http_fetcher(), downloader=make_http_downloader()
+    )
+    return pipeline.run(url, max_pages=max_pages)
+
+
 @router.get("", response_model=list[BrandOut])
 def list_brands(session: Session = Depends(get_session)) -> list[Brand]:
     return list(session.scalars(select(Brand).order_by(Brand.name)).all())

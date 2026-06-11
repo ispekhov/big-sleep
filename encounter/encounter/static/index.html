@@ -48,6 +48,7 @@
 </header>
 <nav>
   <button data-tab="import" class="active">Brand Import</button>
+  <button data-tab="catalogue">Catalogue</button>
   <button data-tab="search">Visual Search</button>
   <button data-tab="review">Review Queue</button>
 </nav>
@@ -66,6 +67,20 @@
       </div>
       <button class="go" id="import-go">Import</button>
       <div id="import-out"></div>
+    </div>
+  </section>
+
+  <!-- CATALOGUE -->
+  <section id="tab-catalogue" hidden>
+    <div class="panel">
+      <h2>Imported catalogue</h2>
+      <div class="row">
+        <div><label>Filter by brand</label>
+          <select id="cat-brand"><option value="">All brands</option></select></div>
+        <div><label>&nbsp;</label><button class="go" id="cat-refresh" style="margin-top:0">Refresh</button></div>
+      </div>
+      <div id="cat-count" class="muted" style="margin-top:8px"></div>
+      <div id="cat-out" class="grid" style="margin-top:14px"></div>
     </div>
   </section>
 
@@ -103,8 +118,9 @@ const api = (p, opt) => fetch(p, opt).then(async r => {
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
   b.classList.add('active');
-  ['import','search','review'].forEach(t => $('#tab-'+t).hidden = (t !== b.dataset.tab));
+  ['import','catalogue','search','review'].forEach(t => $('#tab-'+t).hidden = (t !== b.dataset.tab));
   if (b.dataset.tab === 'review') loadReview();
+  if (b.dataset.tab === 'catalogue') loadCatalogue();
 });
 
 // health
@@ -220,6 +236,44 @@ function bindCorrection(imageId) {
       $('#cor-out').innerHTML = '<p class="ok">Submitted for verification. Thank you!</p>';
     } catch (e) { $('#cor-out').innerHTML = `<p class="err">${e.message}</p>`; }
   };
+}
+
+// CATALOGUE
+let catBrandsLoaded = false;
+$('#cat-refresh').onclick = loadCatalogue;
+$('#cat-brand').onchange = loadCatalogue;
+async function loadCatalogue() {
+  if (!catBrandsLoaded) {
+    try {
+      const brands = await api('/brands');
+      const sel = $('#cat-brand');
+      brands.forEach(b => {
+        const o = document.createElement('option');
+        o.value = b.id; o.textContent = b.name; sel.appendChild(o);
+      });
+      catBrandsLoaded = true;
+    } catch (e) {}
+  }
+  $('#cat-out').innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    const bid = $('#cat-brand').value;
+    const q = bid ? `/products?limit=200&brand_id=${bid}` : '/products?limit=200';
+    const items = await api(q);
+    $('#cat-count').textContent = `${items.length} product${items.length===1?'':'s'}`;
+    if (!items.length) {
+      $('#cat-out').innerHTML = '<p class="muted">No products yet — import a brand first.</p>';
+      return;
+    }
+    $('#cat-out').innerHTML = items.map(p => {
+      const img = (p.images[0]||{}).image_url || '';
+      return `<div class="thumb">
+        <img src="${img}" loading="lazy" onerror="this.style.opacity=0.2"/>
+        <div style="margin-top:6px">${p.name||''}</div>
+        <small class="muted">${(p.brand||{}).name||''}${p.category? ' · '+p.category:''}</small>
+        <div><small>${money(p.price, p.currency)}</small></div>
+      </div>`;
+    }).join('');
+  } catch (e) { $('#cat-out').innerHTML = `<p class="err">${e.message}</p>`; }
 }
 
 // REVIEW

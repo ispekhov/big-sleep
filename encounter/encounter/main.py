@@ -7,7 +7,6 @@ and http://localhost:8000/docs  for the API.
 
 from __future__ import annotations
 
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -45,7 +44,6 @@ def create_app() -> FastAPI:
         title="Encounter — Product Recognition Platform",
         version=__version__,
         lifespan=lifespan,
-        debug=os.environ.get("ENCOUNTER_DEBUG") == "1",
         description=(
             "Point a camera at furniture, lighting, and decor and identify "
             "the exact product. V1: brand import, product DB, image storage, "
@@ -80,139 +78,6 @@ def create_app() -> FastAPI:
             "indexed_vectors": indexed,
         }
 
-    @app.get("/debug/db", include_in_schema=False)
-    def debug_db() -> dict:
-        # Temporary diagnostic: report the real DB connection error (if any).
-        from sqlalchemy import text
-
-        from .db import engine
-
-        try:
-            with engine.connect() as conn:
-                one = conn.execute(text("select 1")).scalar()
-                vectors = conn.execute(
-                    text("select count(*) from image_vectors")
-                ).scalar()
-            return {"ok": True, "select1": one, "image_vectors": vectors}
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "type": type(exc).__name__, "error": str(exc)}
-
-    @app.get("/debug/page", include_in_schema=False)
-    def debug_page() -> dict:
-        # Temporary: surface any exception raised while building the homepage.
-        import traceback
-
-        try:
-            return {"ok": True, "html_len": len(INDEX_HTML)}
-        except Exception:  # noqa: BLE001
-            return {"ok": False, "error": traceback.format_exc()}
-
-    @app.get("/debug/crawl", include_in_schema=False)
-    def debug_crawl(url: str, pages: int = 15) -> dict:
-        # Temporary: inspect what the importer sees for a brand URL.
-        from .importer.crawler import Crawler
-        from .importer.extractor import extract_product
-        from .importer.pipeline import make_http_fetcher
-
-        fetcher = make_http_fetcher()
-        home = fetcher(url)
-        crawler = Crawler(fetcher, max_pages=pages)
-        sitemap = crawler._discover_via_sitemap(url)
-        result = crawler.crawl(url)
-        samples = []
-        for page in result.product_pages[:5]:
-            ex = extract_product(page.html, page.url)
-            samples.append(
-                {
-                    "url": page.url,
-                    "extracted": ex is not None,
-                    "name": ex.name if ex else None,
-                    "images": len(ex.image_urls) if ex else 0,
-                    "price": ex.price if ex else None,
-                }
-            )
-        return {
-            "home_status": home.status if home else None,
-            "home_len": len(home.html) if home else 0,
-            "sitemap_urls_found": len(sitemap),
-            "sitemap_sample": sitemap[:12],
-            "pages_crawled": result.pages_crawled,
-            "product_pages_found": len(result.product_pages),
-            "product_sample_urls": [p.url for p in result.product_pages[:12]],
-            "extraction_samples": samples,
-        }
-
-    @app.get("/debug/inspect", include_in_schema=False)
-    def debug_inspect(url: str) -> dict:
-        # Temporary: inspect a single page's markup + product links.
-        from .importer.extractor import extract_product
-        from .importer.pipeline import make_http_fetcher
-        from .util import make_soup
-
-        page = make_http_fetcher()(url)
-        if page is None:
-            return {"ok": False, "error": "fetch failed"}
-        html = page.html
-        soup = make_soup(html)
-        links, seen = [], set()
-        for a in soup.find_all("a", href=True):
-            h = a["href"]
-            if "/products/" in h and h not in seen:
-                seen.add(h)
-                links.append(h)
-            if len(links) >= 25:
-                break
-        ex = extract_product(html, url)
-        return {
-            "status": page.status,
-            "html_len": len(html),
-            "jsonld_scripts": len(soup.find_all("script", type="application/ld+json")),
-            "has_product_jsonld": '"Product"' in html,
-            "has_og_image": "og:image" in html,
-            "has_next_data": "__NEXT_DATA__" in html or "__NUXT__" in html,
-            "product_links_sample": links,
-            "extracted": ex is not None,
-            "extracted_name": ex.name if ex else None,
-            "extracted_images": len(ex.image_urls) if ex else 0,
-            "body_snippet": html[:300],
-        }
-
-    @app.get("/debug/shopify", include_in_schema=False)
-    def debug_shopify(url: str) -> dict:
-        # Temporary: check whether a site exposes the Shopify products.json API.
-        from .importer.pipeline import make_http_fetcher
-
-        base = url.rstrip("/")
-        page = make_http_fetcher()(f"{base}/products.json?limit=3")
-        if page is None:
-            return {"ok": False, "error": "fetch failed"}
-        snippet = page.html[:600]
-        return {
-            "status": page.status,
-            "looks_json": page.html.lstrip().startswith("{"),
-            "len": len(page.html),
-            "snippet": snippet,
-        }
-
-    @app.get("/debug/import", include_in_schema=False)
-    def debug_import(url: str, pages: int = 8) -> dict:
-        # Temporary: run a real import (GET-friendly) and return the summary.
-        from .db import SessionLocal
-        from .importer.pipeline import (
-            ImportPipeline,
-            make_http_downloader,
-            make_http_fetcher,
-        )
-
-        with SessionLocal() as session:
-            pipeline = ImportPipeline(
-                session,
-                fetcher=make_http_fetcher(),
-                downloader=make_http_downloader(),
-            )
-            summary = pipeline.run(url, max_pages=pages)
-        return summary.model_dump()
-
     app.include_router(brands.router)
     app.include_router(products.router)
     app.include_router(search.router)
@@ -238,8 +103,8 @@ def _reindex_from_db() -> None:
     """Rebuild an empty in-memory vector index from stored embeddings.
 
     The in-memory store is process-local, so on each boot we hydrate it from
-    the embeddings persisted in Postgres/SQLite. (No-op for Qdrant, which is
-    durable — guarded by the count check.)
+    the embeddings persisted in Postgres/SQLite. (No-op for Qdrant/pgvector,
+    which are durable — guarded by the count check.)
     """
     import numpy as np
     from sqlalchemy import select
