@@ -18,6 +18,63 @@ from ..schemas import BrandOut, ImportRequest, ImportSummary, ProductOut
 router = APIRouter(prefix="/brands", tags=["brands"])
 
 
+@router.get("/diagnose")
+def diagnose_brand(url: str) -> dict:
+    """Classify how (and whether) a brand site can be auto-imported.
+
+    Used by the batch pipeline to triage a list of brands into: works via the
+    Shopify API, works via structured markup, or needs the headless renderer /
+    a per-brand adapter. Cheap: a homepage fetch, a products.json probe, and a
+    tiny crawl.
+    """
+    from ..importer.crawler import Crawler
+    from ..importer.extractor import extract_product
+    from ..importer.shopify import fetch_shopify_products
+    from ..util import make_soup
+
+    fetcher = make_http_fetcher()
+    home = fetcher(url)
+    if home is None or home.status >= 400:
+        return {
+            "url": url,
+            "home_status": home.status if home else None,
+            "classification": "blocked_or_unreachable",
+        }
+
+    html = home.html
+    shopify = fetch_shopify_products(url, fetcher, max_pages=1)
+    has_jsonld_product = "ld+json" in html and '"Product"' in html
+    has_og = "og:type" in html or "og:image" in html
+
+    crawler = Crawler(fetcher, max_pages=4)
+    crawl = crawler.crawl(url)
+    extractable = sum(
+        1 for p in crawl.product_pages[:4] if extract_product(p.html, p.url)
+    )
+
+    if shopify:
+        cls = "shopify_ok"
+    elif extractable:
+        cls = "structured_ok"
+    elif has_jsonld_product:
+        cls = "structured_maybe"
+    else:
+        cls = "needs_headless_or_custom"
+
+    return {
+        "url": url,
+        "home_status": home.status,
+        "home_bytes": len(html),
+        "shopify_products": len(shopify) if shopify else 0,
+        "has_jsonld_product": has_jsonld_product,
+        "has_opengraph": has_og,
+        "pages_crawled": crawl.pages_crawled,
+        "product_pages_found": len(crawl.product_pages),
+        "extractable_sample": extractable,
+        "classification": cls,
+    }
+
+
 @router.post("/import", response_model=ImportSummary)
 def import_brand(
     req: ImportRequest, session: Session = Depends(get_session)
