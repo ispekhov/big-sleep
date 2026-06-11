@@ -156,12 +156,32 @@ class FirecrawlClient:
         )
 
 
+def _config_from_db(key: str) -> str | None:
+    """Read a secret from the object_id.app_config table (a tiny secret store).
+
+    Lets operators set the Firecrawl key in the DB instead of an env var.
+    Best-effort: any failure (table missing, DB down) yields None.
+    """
+    try:
+        from sqlalchemy import text
+
+        from ..db import engine
+
+        with engine.connect() as conn:
+            return conn.execute(
+                text("select value from app_config where key = :k"), {"k": key}
+            ).scalar()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def get_firecrawl_client() -> FirecrawlClient | None:
     settings = get_settings()
-    if not settings.firecrawl_api_key:
+    key = settings.firecrawl_api_key or _config_from_db("firecrawl_api_key")
+    if not key:
         return None
     return FirecrawlClient(
-        settings.firecrawl_api_key,
+        key,
         settings.firecrawl_base_url,
         settings.firecrawl_timeout,
     )
