@@ -1,0 +1,13 @@
+[project]
+name = "encounter"
+version = "1.0.0"
+description = "Encounter — Product Recognition Platform for furniture, lighting & decor"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.setuptools.packages.find]
+include = ["encounter*"]
