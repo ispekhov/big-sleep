@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Encounter — Console</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #181b22; --line: #272b35; --txt: #e8eaed;
+    --muted: #9aa0aa; --accent: #6ea8fe; --good: #4ade80; --warn: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--txt); }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 12px; }
+  header h1 { font-size: 18px; margin: 0; }
+  header span { color: var(--muted); font-size: 13px; }
+  nav { display: flex; gap: 4px; padding: 0 24px; border-bottom: 1px solid var(--line); }
+  nav button { background: none; border: none; color: var(--muted); padding: 12px 16px; cursor: pointer; border-bottom: 2px solid transparent; font-size: 14px; }
+  nav button.active { color: var(--txt); border-bottom-color: var(--accent); }
+  main { padding: 24px; max-width: 1100px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+  h2 { margin: 0 0 14px; font-size: 15px; }
+  label { display: block; color: var(--muted); font-size: 12px; margin: 10px 0 4px; }
+  input, textarea { width: 100%; background: #11141a; border: 1px solid var(--line); color: var(--txt); border-radius: 7px; padding: 9px 11px; font-size: 14px; }
+  button.go { background: var(--accent); color: #06101f; border: none; border-radius: 7px; padding: 10px 18px; font-weight: 600; cursor: pointer; margin-top: 14px; }
+  button.go:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .row > div { flex: 1; min-width: 160px; }
+  .summary { display: flex; gap: 28px; flex-wrap: wrap; margin-top: 8px; }
+  .summary b { display: block; font-size: 26px; color: var(--accent); }
+  .summary small { color: var(--muted); }
+  .card { display: flex; gap: 16px; border: 1px solid var(--line); border-radius: 9px; padding: 14px; margin-bottom: 12px; background: #11141a; }
+  .card img { width: 120px; height: 120px; object-fit: cover; border-radius: 7px; background: #000; }
+  .conf { font-weight: 700; }
+  .conf.high { color: var(--good); } .conf.mid { color: var(--warn); } .conf.low { color: #f87171; }
+  .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 99px; background: #222733; color: var(--muted); margin-right: 6px; }
+  .muted { color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .grid .thumb { border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: #11141a; }
+  .grid .thumb img { width: 100%; height: 110px; object-fit: cover; border-radius: 6px; }
+  .err { color: #f87171; margin-top: 10px; }
+  .ok { color: var(--good); margin-top: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Encounter</h1><span id="health">Product Recognition Console</span>
+</header>
+<nav>
+  <button data-tab="import" class="active">Brand Import</button>
+  <button data-tab="search">Visual Search</button>
+  <button data-tab="review">Review Queue</button>
+</nav>
+<main>
+  <!-- IMPORT -->
+  <section id="tab-import">
+    <div class="panel">
+      <h2>Import a brand</h2>
+      <label>Brand website URL</label>
+      <input id="import-url" placeholder="https://www.tomdixon.net" />
+      <div class="row">
+        <div>
+          <label>Max pages to crawl (optional)</label>
+          <input id="import-max" type="number" placeholder="200" />
+        </div>
+      </div>
+      <button class="go" id="import-go">Import</button>
+      <div id="import-out"></div>
+    </div>
+  </section>
+
+  <!-- SEARCH -->
+  <section id="tab-search" hidden>
+    <div class="panel">
+      <h2>Identify a photo</h2>
+      <label>Upload a photo of a design object</label>
+      <input id="search-file" type="file" accept="image/*" />
+      <button class="go" id="search-go">Search</button>
+      <div id="search-out"></div>
+    </div>
+  </section>
+
+  <!-- REVIEW -->
+  <section id="tab-review" hidden>
+    <div class="panel">
+      <h2>Products needing review</h2>
+      <p class="muted">Importer-flagged products with incomplete data. Fix fields and resolve.</p>
+      <button class="go" id="review-refresh">Refresh</button>
+      <div id="review-out"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const api = (p, opt) => fetch(p, opt).then(async r => {
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.detail || r.statusText);
+  return body;
+});
+
+// tabs
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  ['import','search','review'].forEach(t => $('#tab-'+t).hidden = (t !== b.dataset.tab));
+  if (b.dataset.tab === 'review') loadReview();
+});
+
+// health
+api('/health').then(h => {
+  $('#health').textContent =
+    `embedder=${h.embedder} · vectors=${h.indexed_vectors} · storage=${h.storage_backend}`;
+}).catch(()=>{});
+
+const confClass = (c) => c >= 0.9 ? 'high' : c >= 0.6 ? 'mid' : 'low';
+const money = (p, c) => p == null ? '' : `${c||'$'}${Number(p).toLocaleString()}`;
+
+// IMPORT
+$('#import-go').onclick = async () => {
+  const url = $('#import-url').value.trim();
+  if (!url) return;
+  const btn = $('#import-go'); btn.disabled = true;
+  $('#import-out').innerHTML = '<p class="muted">Crawling… this can take a while.</p>';
+  try {
+    const max = $('#import-max').value;
+    const body = { url };
+    if (max) body.max_pages = Number(max);
+    const s = await api('/brands/import', {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+    });
+    $('#import-out').innerHTML = `
+      <div class="summary">
+        <div><b>${s.products_imported}</b><small>products imported</small></div>
+        <div><b>${s.images_imported}</b><small>images imported</small></div>
+        <div><b>${s.products_need_review}</b><small>need review</small></div>
+        <div><b>${s.pages_crawled}</b><small>pages crawled</small></div>
+      </div>
+      <p class="ok">${s.brand}: ${s.message}</p>`;
+  } catch (e) {
+    $('#import-out').innerHTML = `<p class="err">${e.message}</p>`;
+  } finally { btn.disabled = false; }
+};
+
+// SEARCH
+$('#search-go').onclick = async () => {
+  const f = $('#search-file').files[0];
+  if (!f) return;
+  const btn = $('#search-go'); btn.disabled = true;
+  $('#search-out').innerHTML = '<p class="muted">Identifying…</p>';
+  try {
+    const fd = new FormData(); fd.append('file', f);
+    const r = await api('/search', { method: 'POST', body: fd });
+    if (!r.top_candidate) {
+      $('#search-out').innerHTML = renderCorrectionForm(r.query_image_id);
+      bindCorrection(r.query_image_id);
+      return;
+    }
+    const c = r.top_candidate;
+    let html = candidateCard(c, true);
+    if (r.candidates.length > 1) {
+      html += '<h2 style="margin-top:18px">Other candidates</h2>';
+      r.candidates.slice(1).forEach(x => html += candidateCard(x, false));
+    }
+    if (r.similar_products.length) {
+      html += '<h2 style="margin-top:18px">Similar products</h2><div class="grid">';
+      r.similar_products.forEach(s => html += `
+        <div class="thumb"><img src="${s.images[0]||''}" /><div>${s.product_name}</div>
+        <small class="muted">${money(s.price,s.currency)}</small></div>`);
+      html += '</div>';
+    }
+    html += `<p class="muted" style="margin-top:14px">Not right?
+      <a href="#" id="wrong">Correct this</a></p>`;
+    $('#search-out').innerHTML = html;
+    $('#wrong').onclick = (e) => { e.preventDefault();
+      $('#search-out').insertAdjacentHTML('beforeend', renderCorrectionForm(r.query_image_id));
+      bindCorrection(r.query_image_id); };
+  } catch (e) {
+    $('#search-out').innerHTML = `<p class="err">${e.message}</p>`;
+  } finally { btn.disabled = false; }
+};
+
+function candidateCard(c, primary) {
+  const cls = confClass(c.confidence);
+  return `<div class="card">
+    <img src="${c.matched_image_url || c.images[0] || ''}" />
+    <div>
+      <div><span class="pill">${c.brand}</span>
+        <span class="conf ${cls}">${(c.confidence*100).toFixed(0)}% confident</span></div>
+      <h2 style="margin:6px 0">${c.product_name}</h2>
+      <div>${money(c.price, c.currency)} ${c.category ? '· '+c.category : ''}</div>
+      <p class="muted">${(c.description||'').slice(0,200)}</p>
+    </div></div>`;
+}
+
+function renderCorrectionForm(imageId) {
+  return `<div class="panel" style="margin-top:14px">
+    <h2>Label this photo (field capture)</h2>
+    <p class="muted">Your label enters the verification pipeline — it never trains the model directly.</p>
+    <div class="row">
+      <div><label>Brand</label><input id="cor-brand" placeholder="Tom Dixon"/></div>
+      <div><label>Product</label><input id="cor-prod" placeholder="Melt Pendant"/></div>
+    </div>
+    <label>Location (optional)</label><input id="cor-loc" placeholder="Hotel lobby"/>
+    <label>Notes (optional)</label><input id="cor-notes"/>
+    <button class="go" id="cor-go" data-img="${imageId}">Submit correction</button>
+    <div id="cor-out"></div></div>`;
+}
+
+function bindCorrection(imageId) {
+  $('#cor-go').onclick = async () => {
+    try {
+      await api(`/images/${imageId}/correction`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          brand: $('#cor-brand').value, product_name: $('#cor-prod').value,
+          capture_location: $('#cor-loc').value || null, notes: $('#cor-notes').value || null
+        })
+      });
+      $('#cor-out').innerHTML = '<p class="ok">Submitted for verification. Thank you!</p>';
+    } catch (e) { $('#cor-out').innerHTML = `<p class="err">${e.message}</p>`; }
+  };
+}
+
+// REVIEW
+$('#review-refresh').onclick = loadReview;
+async function loadReview() {
+  $('#review-out').innerHTML = '<p class="muted">Loading…</p>';
+  try {
+    const items = await api('/review/products?limit=50');
+    if (!items.length) { $('#review-out').innerHTML = '<p class="ok">Queue is clear 🎉</p>'; return; }
+    $('#review-out').innerHTML = items.map(p => `
+      <div class="card" data-pid="${p.id}">
+        <img src="${(p.images[0]||{}).image_url||''}" />
+        <div style="flex:1">
+          <span class="pill">${(p.brand||{}).name||''}</span>
+          <label>Name</label><input value="${p.name||''}" data-f="name"/>
+          <div class="row">
+            <div><label>Category</label><input value="${p.category||''}" data-f="category"/></div>
+            <div><label>Price</label><input value="${p.price||''}" data-f="price"/></div>
+          </div>
+          <label>Materials</label><input value="${p.materials||''}" data-f="materials"/>
+          <button class="go" data-save="${p.id}">Save & resolve</button>
+        </div></div>`).join('');
+    document.querySelectorAll('[data-save]').forEach(btn => btn.onclick = async () => {
+      const card = btn.closest('[data-pid]');
+      const body = { resolve_review: true };
+      card.querySelectorAll('[data-f]').forEach(i => {
+        let v = i.value.trim(); if (v === '') return;
+        body[i.dataset.f] = i.dataset.f === 'price' ? Number(v) : v;
+      });
+      try {
+        await api(`/products/${btn.dataset.save}`, {
+          method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
+        });
+        card.remove();
+      } catch (e) { alert(e.message); }
+    });
+  } catch (e) { $('#review-out').innerHTML = `<p class="err">${e.message}</p>`; }
+}
+</script>
+</body>
+</html>

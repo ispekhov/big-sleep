@@ -1,0 +1,22 @@
+# --- Core (required to run V1 with built-in fallbacks) ---
+fastapi>=0.110
+uvicorn[standard]>=0.27
+sqlalchemy>=2.0
+pydantic>=2.6
+pydantic-settings>=2.1
+python-multipart>=0.0.9
+httpx>=0.27
+beautifulsoup4>=4.12
+lxml>=5.1
+numpy>=1.26
+pillow>=10.2
+
+# --- Optional production backends (uncomment as needed) ---
+# psycopg[binary]>=3.1          # Postgres driver
+# boto3>=1.34                   # Cloudflare R2 (S3-compatible) storage
+# qdrant-client>=1.8            # Qdrant vector database
+# torch>=2.2                    # SigLIP / DINOv2 embeddings
+# transformers>=4.40            # SigLIP / DINOv2 embeddings
+
+# --- Dev ---
+pytest>=8.0
