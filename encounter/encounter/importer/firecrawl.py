@@ -13,6 +13,7 @@ minor API shape change degrades gracefully instead of crashing an import.
 from __future__ import annotations
 
 import logging
+from urllib.parse import urljoin
 
 import httpx
 
@@ -138,7 +139,11 @@ class FirecrawlClient:
         if not isinstance(extracted, dict):
             return None
         name = extracted.get("name")
-        images = [i for i in (extracted.get("images") or []) if isinstance(i, str)]
+        images = [
+            urljoin(url, i)
+            for i in (extracted.get("images") or [])
+            if isinstance(i, str) and i and not i.startswith("data:")
+        ]
         if not name or not images:
             return None
         return ExtractedProduct(
