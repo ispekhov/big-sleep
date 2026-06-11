@@ -14,9 +14,8 @@ from typing import Callable
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 
-from bs4 import BeautifulSoup
-
 from ..config import get_settings
+from ..util import make_soup
 from .extractor import looks_like_product_page
 
 Fetcher = Callable[[str], "FetchedPage | None"]
@@ -83,7 +82,12 @@ class Crawler:
         self._load_robots(start_url)
         result = CrawlResult()
         seen: set[str] = set()
-        queue: deque[str] = deque([start_url])
+        # Seed the queue with sitemap URLs first (prioritising likely product
+        # pages) so a bounded crawl finds real products fast, then fall back
+        # to following links from the homepage.
+        sitemap_urls = self._discover_via_sitemap(start_url)
+        queue: deque[str] = deque(sitemap_urls)
+        queue.append(start_url)
 
         while queue and result.pages_crawled < self.max_pages:
             url = queue.popleft()
@@ -112,9 +116,53 @@ class Crawler:
 
         return result
 
+    def _discover_via_sitemap(self, start_url: str) -> list[str]:
+        """Pull candidate URLs from /sitemap.xml (and nested sitemaps).
+
+        Product URLs (per ``looks_like_product_page`` URL hints) are returned
+        first so they are crawled within the page budget. Best-effort: any
+        failure just yields an empty list and the crawler falls back to BFS.
+        """
+        parsed = urlparse(start_url)
+        roots = [
+            f"{parsed.scheme}://{parsed.netloc}/sitemap.xml",
+            f"{parsed.scheme}://{parsed.netloc}/sitemap_index.xml",
+        ]
+        found: list[str] = []
+        seen_maps: set[str] = set()
+        pending = list(roots)
+        # Bound sitemap fetches so a giant sitemap index can't blow the budget.
+        while pending and len(seen_maps) < 12:
+            sm = pending.pop(0)
+            if sm in seen_maps:
+                continue
+            seen_maps.add(sm)
+            page = self._fetch(sm)
+            if page is None or page.status >= 400 or "<" not in page.html:
+                continue
+            soup = make_soup(page.html)
+            # Nested sitemap index -> queue child sitemaps.
+            for loc in soup.find_all("loc"):
+                url = (loc.get_text() or "").strip()
+                if not url or not _same_site(start_url, url):
+                    continue
+                if url.endswith(".xml"):
+                    pending.append(url)
+                else:
+                    found.append(url)
+        # Product-looking URLs first, then the rest, de-duplicated.
+        products = [u for u in found if looks_like_product_page(u)]
+        others = [u for u in found if not looks_like_product_page(u)]
+        ordered, seen = [], set()
+        for u in products + others:
+            if u not in seen:
+                seen.add(u)
+                ordered.append(u)
+        return ordered
+
     @staticmethod
     def _extract_links(page: FetchedPage) -> list[str]:
-        soup = BeautifulSoup(page.html, "lxml")
+        soup = make_soup(page.html)
         links = []
         for a in soup.find_all("a", href=True):
             href = a["href"].strip()

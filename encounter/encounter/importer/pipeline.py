@@ -13,7 +13,6 @@ from typing import Callable
 from urllib.parse import urlparse
 
 import httpx
-from bs4 import BeautifulSoup
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -23,6 +22,7 @@ from ..enums import ImageType, SourceType, VerificationStatus
 from ..models import Brand, Image, Product, Source
 from ..schemas import ImportSummary
 from ..storage import ObjectStorage, get_storage
+from ..util import make_soup
 from ..vectorstore import VectorStore, get_vector_store
 from .crawler import Crawler, FetchedPage, Fetcher
 from .extractor import ExtractedProduct, extract_product
@@ -39,7 +39,7 @@ class DownloadedImage:
 
 def _brand_name_from_site(start_url: str, homepage: FetchedPage | None) -> str:
     if homepage and homepage.html:
-        soup = BeautifulSoup(homepage.html, "lxml")
+        soup = make_soup(homepage.html)
         tag = soup.find("meta", property="og:site_name")
         if tag and tag.get("content"):
             return tag["content"].strip()
@@ -176,9 +176,16 @@ class ImportPipeline:
             return False
 
         digest = hashlib.sha256(downloaded.data).hexdigest()[:24]
-        ext = ".jpg"
-        key = f"products/{product.brand_id}/{product.id}/{digest}{ext}"
-        public_url = self.storage.put(key, downloaded.data, downloaded.content_type)
+        if self.settings.rehost_images:
+            key = f"products/{product.brand_id}/{product.id}/{digest}.jpg"
+            public_url = self.storage.put(
+                key, downloaded.data, downloaded.content_type
+            )
+        else:
+            # Reference the original brand/CDN URL — no storage round-trip.
+            # Embeddings are still computed from the bytes we just fetched.
+            key = None
+            public_url = img_url
 
         image = Image(
             product_id=product.id,

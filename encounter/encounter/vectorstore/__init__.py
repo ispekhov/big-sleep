@@ -16,6 +16,10 @@ def get_vector_store() -> VectorStore:
         from .qdrant import QdrantVectorStore
 
         return QdrantVectorStore()
+    if settings.vector_backend == "pgvector":
+        from .pgvector import PgVectorStore
+
+        return PgVectorStore()
     return InMemoryVectorStore()
 
 

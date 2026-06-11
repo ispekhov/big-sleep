@@ -7,11 +7,12 @@ and http://localhost:8000/docs  for the API.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
@@ -19,8 +20,22 @@ from .api import brands, corrections, products, search
 from .config import get_settings
 from .db import init_db
 from .vectorstore import get_vector_store
+from .webui import INDEX_HTML
 
-STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Don't let a transient DB hiccup take down the whole app at boot — the
+    # console page and /health must still load. Endpoints that need the DB
+    # surface their own errors.
+    try:
+        init_db()
+        if get_settings().vector_backend == "memory":
+            # Process-local index: rehydrate embeddings persisted in the DB.
+            _reindex_from_db()
+    except Exception as exc:  # noqa: BLE001
+        app.state.last_db_error = str(exc)
+    yield
 
 
 def create_app() -> FastAPI:
@@ -28,6 +43,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Encounter — Product Recognition Platform",
         version=__version__,
+        lifespan=lifespan,
         description=(
             "Point a camera at furniture, lighting, and decor and identify "
             "the exact product. V1: brand import, product DB, image storage, "
@@ -41,20 +57,25 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    @app.on_event("startup")
-    def _startup() -> None:
-        init_db()
-        _reindex_from_db()
-
     @app.get("/health", tags=["meta"])
     def health() -> dict:
+        # Stay green even if the DB/vector store is unreachable, so the page
+        # and this probe still report deployment status.
+        try:
+            indexed = get_vector_store().count()
+            db_ok = True
+        except Exception as exc:  # noqa: BLE001
+            indexed = None
+            db_ok = False
+            app.state.last_db_error = str(exc)
         return {
-            "status": "ok",
+            "status": "ok" if db_ok else "degraded",
             "version": __version__,
             "embedder": settings.embedder_backend,
             "vector_backend": settings.vector_backend,
             "storage_backend": settings.storage_backend,
-            "indexed_vectors": get_vector_store().count(),
+            "database_connected": db_ok,
+            "indexed_vectors": indexed,
         }
 
     app.include_router(brands.router)
@@ -72,8 +93,8 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/", include_in_schema=False)
-    def index() -> FileResponse:
-        return FileResponse(STATIC_DIR / "index.html")
+    def index() -> HTMLResponse:
+        return HTMLResponse(INDEX_HTML)
 
     return app
 

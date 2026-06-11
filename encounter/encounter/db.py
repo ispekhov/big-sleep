@@ -7,6 +7,7 @@ from contextlib import contextmanager
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.pool import NullPool
 
 from .config import get_settings
 
@@ -17,23 +18,27 @@ class Base(DeclarativeBase):
 
 _settings = get_settings()
 
-# SQLite needs check_same_thread off when used across FastAPI threads.
-_connect_args = (
-    {"check_same_thread": False}
-    if _settings.database_url.startswith("sqlite")
-    else {}
-)
+_engine_kwargs: dict = {"future": True}
+if _settings.database_url.startswith("sqlite"):
+    # SQLite needs check_same_thread off when used across FastAPI threads.
+    _engine_kwargs["connect_args"] = {"check_same_thread": False}
+elif _settings.serverless_db:
+    # Behind a transaction pooler (Supabase/pgbouncer) each lambda invocation
+    # is short-lived: don't keep a client-side pool and disable psycopg's
+    # prepared statements (incompatible with transaction pooling).
+    _engine_kwargs["poolclass"] = NullPool
+    _engine_kwargs["connect_args"] = {"prepare_threshold": None}
 
-engine = create_engine(
-    _settings.database_url, future=True, connect_args=_connect_args
-)
+engine = create_engine(_settings.database_url, **_engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
 
 def init_db() -> None:
-    """Create all tables. Use Alembic for real migrations in production."""
+    """Create all tables. Use Alembic/SQL migrations in production."""
     from . import models  # noqa: F401  (register mappers)
 
+    if not _settings.auto_create_tables:
+        return
     Base.metadata.create_all(engine)
 
 

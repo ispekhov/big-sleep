@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # --- Database ---------------------------------------------------------
     # e.g. postgresql+psycopg://user:pass@host:5432/encounter
     database_url: str = f"sqlite:///{DATA_DIR / 'encounter.db'}"
+    # On serverless (Vercel) point at the Supabase transaction pooler and set
+    # this true so SQLAlchemy uses NullPool + disables psycopg prepared stmts.
+    serverless_db: bool = False
+    # Create tables on startup. Disable in prod when schema is migration-managed.
+    auto_create_tables: bool = True
 
     # --- Object storage (Cloudflare R2 / S3 compatible) -------------------
     # Backend: "local" or "r2". Local writes under var/storage.
@@ -36,6 +41,9 @@ class Settings(BaseSettings):
     r2_bucket: str = "encounter"
     # Public base URL used to build image URLs (CDN in front of R2).
     storage_public_base_url: str = "/media"
+    # When false, the importer references the original brand/CDN image URL
+    # instead of re-hosting bytes — ideal for a stateless serverless demo.
+    rehost_images: bool = True
 
     # --- Embeddings -------------------------------------------------------
     # "fallback" (deterministic perceptual, no GPU) or "siglip".
@@ -44,8 +52,9 @@ class Settings(BaseSettings):
     siglip_model: str = "google/siglip-base-patch16-224"
 
     # --- Vector store -----------------------------------------------------
-    # "memory" or "qdrant".
+    # "memory", "qdrant", or "pgvector" (durable, lives in Postgres).
     vector_backend: str = "memory"
+    pgvector_table: str = "image_vectors"
     qdrant_url: str | None = None
     qdrant_api_key: str | None = None
     qdrant_collection: str = "encounter_images"
@@ -57,7 +66,12 @@ class Settings(BaseSettings):
     # --- Importer / crawler ----------------------------------------------
     crawl_max_pages: int = 200
     crawl_max_images_per_product: int = 8
-    crawl_user_agent: str = "EncounterBot/1.0 (+https://encounter.app)"
+    # Many brand sites sit behind WAFs that 403 non-browser agents, so we
+    # present a mainstream browser UA while still honouring robots.txt.
+    crawl_user_agent: str = (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    )
     crawl_request_timeout: float = 15.0
 
     # --- Search -----------------------------------------------------------

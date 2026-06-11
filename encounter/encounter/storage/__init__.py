@@ -13,6 +13,10 @@ def get_storage() -> ObjectStorage:
         from .r2 import R2Storage
 
         return R2Storage()
+    if settings.storage_backend == "null":
+        from .null import NullStorage
+
+        return NullStorage()
     return LocalStorage()
 
 

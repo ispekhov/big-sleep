@@ -19,6 +19,8 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 
+from ..util import make_soup
+
 _PRODUCT_URL_HINTS = ("/product", "/products/", "/shop/", "/p/", "/item/")
 _PRICE_RE = re.compile(r"([£$€])\s?([\d.,]+)")
 _CURRENCY_SYMBOLS = {"£": "GBP", "$": "USD", "€": "EUR"}
@@ -104,7 +106,7 @@ def looks_like_product_page(url: str, html: str | None = None) -> bool:
 
 def extract_product(html: str, url: str) -> ExtractedProduct | None:
     """Return an ExtractedProduct if ``html`` looks like a product page."""
-    soup = BeautifulSoup(html, "lxml")
+    soup = make_soup(html)
     product = ExtractedProduct(product_url=url)
 
     # 1) JSON-LD Product
