@@ -1,18 +1,14 @@
 """Vercel serverless entry point for the Encounter Object ID web interface.
 
 Vercel's Python runtime serves the module-level ``app`` (an ASGI application).
-Non-secret backend selection is set here so the deployment is deterministic:
-
-  * pgvector for durable similarity search (stateless across invocations).
-  * Null storage + remote image URLs (read-only ephemeral filesystem).
-
-The database connection string is a SECRET and is intentionally NOT in the
-repo: set ``ENCOUNTER_DATABASE_URL`` as a Vercel project environment variable
-(Supabase transaction-pooler URL for the scoped ``objectid_app`` role).
+Non-secret backend selection is set here so the deployment is deterministic;
+the database connection string is supplied via the ``ENCOUNTER_DATABASE_URL``
+Vercel env var (it is a secret and is intentionally not in the repo).
 """
 
 import os
 import sys
+import traceback
 
 # Make the `encounter` package importable (it lives in ./encounter/encounter).
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +24,22 @@ os.environ.setdefault("ENCOUNTER_AUTO_CREATE_TABLES", "true")
 os.environ.setdefault("ENCOUNTER_CRAWL_MAX_PAGES", "40")
 os.environ.setdefault("ENCOUNTER_CRAWL_MAX_IMAGES_PER_PRODUCT", "3")
 
-from encounter.main import app  # noqa: E402
+try:
+    from encounter.main import app  # noqa: E402
+except Exception:  # pragma: no cover - diagnostic fallback
+    _TB = traceback.format_exc()
+
+    async def app(scope, receive, send):  # minimal pure-ASGI error reporter
+        if scope["type"] != "http":
+            return
+        body = ("Encounter import failed:\n\n" + _TB).encode()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 500,
+                "headers": [(b"content-type", b"text/plain; charset=utf-8")],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
 
 __all__ = ["app"]
