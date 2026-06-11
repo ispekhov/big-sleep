@@ -24,6 +24,7 @@ os.environ.setdefault("ENCOUNTER_EMBEDDING_DIM", "512")
 os.environ.setdefault("ENCOUNTER_STORAGE_BACKEND", "null")
 os.environ.setdefault("ENCOUNTER_REHOST_IMAGES", "false")
 os.environ.setdefault("ENCOUNTER_AUTO_CREATE_TABLES", "false")
+os.environ.setdefault("ENCOUNTER_DB_SCHEMA", "object_id,public")
 os.environ.setdefault("ENCOUNTER_CRAWL_MAX_PAGES", "40")
 os.environ.setdefault("ENCOUNTER_CRAWL_MAX_IMAGES_PER_PRODUCT", "3")
 

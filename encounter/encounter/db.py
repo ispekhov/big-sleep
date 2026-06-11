@@ -22,12 +22,20 @@ _engine_kwargs: dict = {"future": True}
 if _settings.database_url.startswith("sqlite"):
     # SQLite needs check_same_thread off when used across FastAPI threads.
     _engine_kwargs["connect_args"] = {"check_same_thread": False}
-elif _settings.serverless_db:
-    # Behind a transaction pooler (Supabase/pgbouncer) each lambda invocation
-    # is short-lived: don't keep a client-side pool and disable psycopg's
-    # prepared statements (incompatible with transaction pooling).
-    _engine_kwargs["poolclass"] = NullPool
-    _engine_kwargs["connect_args"] = {"prepare_threshold": None}
+else:
+    _connect_args: dict = {}
+    if _settings.serverless_db:
+        # Behind a transaction pooler (Supabase/pgbouncer) each lambda
+        # invocation is short-lived: don't keep a client-side pool and disable
+        # psycopg's prepared statements (incompatible with transaction pooling).
+        _engine_kwargs["poolclass"] = NullPool
+        _connect_args["prepare_threshold"] = None
+    if _settings.db_schema:
+        # Pin search_path so the app only touches its own schema, even when
+        # connecting through a shared/superuser role.
+        _connect_args["options"] = f"-c search_path={_settings.db_schema}"
+    if _connect_args:
+        _engine_kwargs["connect_args"] = _connect_args
 
 engine = create_engine(_settings.database_url, **_engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, future=True)

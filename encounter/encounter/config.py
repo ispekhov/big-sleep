@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     serverless_db: bool = False
     # Create tables on startup. Disable in prod when schema is migration-managed.
     auto_create_tables: bool = True
+    # Pin the Postgres search_path (e.g. "object_id,public") so the app only
+    # uses its own schema even when connecting through a shared role.
+    db_schema: str | None = None
 
     # --- Object storage (Cloudflare R2 / S3 compatible) -------------------
     # Backend: "local" or "r2". Local writes under var/storage.
