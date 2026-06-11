@@ -7,6 +7,7 @@ and http://localhost:8000/docs  for the API.
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
         title="Encounter — Product Recognition Platform",
         version=__version__,
         lifespan=lifespan,
+        debug=os.environ.get("ENCOUNTER_DEBUG") == "1",
         description=(
             "Point a camera at furniture, lighting, and decor and identify "
             "the exact product. V1: brand import, product DB, image storage, "
@@ -94,6 +96,16 @@ def create_app() -> FastAPI:
             return {"ok": True, "select1": one, "image_vectors": vectors}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "type": type(exc).__name__, "error": str(exc)}
+
+    @app.get("/debug/page", include_in_schema=False)
+    def debug_page() -> dict:
+        # Temporary: surface any exception raised while building the homepage.
+        import traceback
+
+        try:
+            return {"ok": True, "html_len": len(INDEX_HTML)}
+        except Exception:  # noqa: BLE001
+            return {"ok": False, "error": traceback.format_exc()}
 
     app.include_router(brands.router)
     app.include_router(products.router)
