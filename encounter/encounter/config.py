@@ -79,9 +79,22 @@ class Settings(BaseSettings):
     search_rerank_k: int = 5
 
     def ensure_dirs(self) -> None:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        # Only needed for the local dev profile (SQLite / local-disk storage).
+        # Serverless filesystems are read-only, so tolerate mkdir failures.
+        needs_data_dir = (
+            self.database_url.startswith("sqlite")
+            or self.storage_backend == "local"
+        )
+        if needs_data_dir:
+            try:
+                DATA_DIR.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
         if self.storage_backend == "local":
-            Path(self.storage_local_dir).mkdir(parents=True, exist_ok=True)
+            try:
+                Path(self.storage_local_dir).mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
 
 
 @lru_cache
