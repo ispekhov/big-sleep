@@ -107,6 +107,41 @@ def create_app() -> FastAPI:
         except Exception:  # noqa: BLE001
             return {"ok": False, "error": traceback.format_exc()}
 
+    @app.get("/debug/crawl", include_in_schema=False)
+    def debug_crawl(url: str, pages: int = 15) -> dict:
+        # Temporary: inspect what the importer sees for a brand URL.
+        from .importer.crawler import Crawler
+        from .importer.extractor import extract_product
+        from .importer.pipeline import make_http_fetcher
+
+        fetcher = make_http_fetcher()
+        home = fetcher(url)
+        crawler = Crawler(fetcher, max_pages=pages)
+        sitemap = crawler._discover_via_sitemap(url)
+        result = crawler.crawl(url)
+        samples = []
+        for page in result.product_pages[:5]:
+            ex = extract_product(page.html, page.url)
+            samples.append(
+                {
+                    "url": page.url,
+                    "extracted": ex is not None,
+                    "name": ex.name if ex else None,
+                    "images": len(ex.image_urls) if ex else 0,
+                    "price": ex.price if ex else None,
+                }
+            )
+        return {
+            "home_status": home.status if home else None,
+            "home_len": len(home.html) if home else 0,
+            "sitemap_urls_found": len(sitemap),
+            "sitemap_sample": sitemap[:12],
+            "pages_crawled": result.pages_crawled,
+            "product_pages_found": len(result.product_pages),
+            "product_sample_urls": [p.url for p in result.product_pages[:12]],
+            "extraction_samples": samples,
+        }
+
     app.include_router(brands.router)
     app.include_router(products.router)
     app.include_router(search.router)
