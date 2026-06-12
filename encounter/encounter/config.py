@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     firecrawl_max_products: int = 3
     firecrawl_timeout: float = 45.0
 
+    # Public base URL of this deployment, used by the batch engine to chain
+    # self-requests so the queue drains autonomously (no external driver).
+    self_base_url: str | None = None
+
     # --- Importer / crawler ----------------------------------------------
     crawl_max_pages: int = 200
     crawl_max_images_per_product: int = 8

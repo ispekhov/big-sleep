@@ -27,6 +27,9 @@ os.environ.setdefault("ENCOUNTER_AUTO_CREATE_TABLES", "false")
 os.environ.setdefault("ENCOUNTER_DB_SCHEMA", "object_id,public")
 os.environ.setdefault("ENCOUNTER_CRAWL_MAX_PAGES", "40")
 os.environ.setdefault("ENCOUNTER_CRAWL_MAX_IMAGES_PER_PRODUCT", "3")
+os.environ.setdefault(
+    "ENCOUNTER_SELF_BASE_URL", "https://encounter-object-id.vercel.app"
+)
 
 _real_app = None
 _import_error = None

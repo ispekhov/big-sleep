@@ -128,7 +128,45 @@ def queue_run(
                 "products": row.products_imported,
             }
         )
+
+    # Self-perpetuate: if work remains, trigger one successor so the queue
+    # drains autonomously without an external driver.
+    remaining = session.scalar(
+        select(BrandQueue).where(BrandQueue.status == "pending").limit(1)
+    )
+    if remaining is not None:
+        _kick_self(1)
     return {"processed": len(processed), "items": processed}
+
+
+def _kick_self(n: int) -> int:
+    """Fire-and-forget GETs to our own queue/run to chain the next batch(es).
+
+    Each request reaches Vercel and starts a fresh 60s worker; we don't wait
+    for the response (short read timeout), so this returns almost immediately.
+    """
+    base = get_settings().self_base_url
+    if not base:
+        return 0
+    import httpx
+
+    sent = 0
+    for _ in range(n):
+        try:
+            httpx.get(
+                f"{base}/brands/queue/run?budget_seconds=55&max_pages=10",
+                timeout=httpx.Timeout(5.0, read=1.0),
+            )
+        except Exception:
+            pass
+        sent += 1  # the worker was triggered even though we time out the read
+    return sent
+
+
+@router.get("/queue/kick")
+def queue_kick(n: int = 5) -> dict:
+    """Start the autonomous batch engine with ``n`` self-sustaining workers."""
+    return {"kicked": _kick_self(n)}
 
 
 @router.get("/diagnose")
