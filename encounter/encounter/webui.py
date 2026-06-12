@@ -135,7 +135,10 @@ INDEX_HTML = """<!DOCTYPE html>
 const $ = (s) => document.querySelector(s);
 const api = (p, opt) => fetch(p, opt).then(async r => {
   const body = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(body.detail || r.statusText);
+  if (!r.ok) {
+    const d = body.detail;
+    throw new Error(typeof d === 'string' ? d : (d ? JSON.stringify(d) : r.statusText));
+  }
   return body;
 });
 
@@ -339,7 +342,7 @@ async function showBrand(bid) {
   $('#cat-out').innerHTML = '<p class="muted">Loading…</p>';
   $('#cat-brand').value = bid;
   try {
-    const items = await api(`/products?limit=1000&brand_id=${bid}`);
+    const items = await api(`/products?limit=2000&brand_id=${bid}`);
     $('#cat-count').textContent = `${items.length} product${items.length===1?'':'s'}`;
     $('#cat-out').innerHTML = items.length ? items.map(p => productTile(p)).join('')
       : '<p class="muted">No products.</p>';
