@@ -43,10 +43,28 @@ class DownloadedImage:
     content_type: str = "image/jpeg"
 
 
+# Second-level public suffixes where the registrable domain is the last THREE
+# labels (e.g. brand.co.uk). Covers the country TLDs design brands actually use.
+_MULTI_TLDS = {
+    "co.uk", "org.uk", "com.au", "net.au", "co.nz", "com.br", "co.jp",
+    "com.tr", "co.kr", "com.mx", "com.hk", "com.sg", "co.za",
+}
+
+
 def _registrable_domain(url: str) -> str:
-    """Normalised host used as a brand's stable identity (drops www + port)."""
-    netloc = urlparse(url).netloc.lower()
-    return netloc.split(":")[0].removeprefix("www.")
+    """The registered domain (eTLD+1) used as a brand's stable identity.
+
+    Drops the port and ANY subdomain (www, us, shop, en …) so every host of
+    the same site — ``www.audocph.com``, ``us.audocph.com`` — maps to one
+    brand (``audocph.com``). Honours common two-level country suffixes.
+    """
+    host = urlparse(url).netloc.lower().split(":")[0]
+    labels = host.split(".")
+    if len(labels) <= 2:
+        return host
+    last_two = ".".join(labels[-2:])
+    n = 3 if last_two in _MULTI_TLDS else 2
+    return ".".join(labels[-n:])
 
 
 def _brand_name_from_site(start_url: str, homepage: FetchedPage | None) -> str:
@@ -125,6 +143,11 @@ class ImportPipeline:
             products_imported += 1
             images_imported += n_images
             needs_review += 1 if flagged else 0
+            # Commit in small batches so the live import-progress ticker (which
+            # polls the product count) climbs steadily instead of jumping from
+            # 0 to the total at the very end.
+            if products_imported % 15 == 0:
+                self.session.commit()
 
         # Layer 1: Shopify products.json (clean, complete) when available.
         shopify = fetch_shopify_products(start_url, self.fetcher)
@@ -244,7 +267,13 @@ class ImportPipeline:
                 if existing is not None:
                     return None, 0, False
 
-        flagged = not ex.required_present or ex.confidence < 0.4
+        # Price sanity: a furniture/lighting/decor catalogue priced at a few
+        # dollars is almost always a parse error or a swatch/sample, not a real
+        # product — flag it for human review rather than trusting it silently.
+        suspicious_price = ex.price is not None and 0 < ex.price < 10
+        flagged = (
+            not ex.required_present or ex.confidence < 0.4 or suspicious_price
+        )
         product = Product(
             brand_id=brand.id,
             source_id=source.id,
