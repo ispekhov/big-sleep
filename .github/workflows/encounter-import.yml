@@ -1,42 +1,29 @@
 name: encounter-import-batch
 
-# Drives the Encounter brand-import queue to completion. Runs on GitHub's
-# runners (open internet), hammering the deployed /brands/queue/run endpoint
-# with a few parallel workers until the queue is empty. Trigger manually.
+# Drives the Encounter brand-import queue to completion. Three parallel jobs
+# each loop the deployed /brands/queue/run endpoint; FOR UPDATE SKIP LOCKED in
+# the endpoint keeps them from grabbing the same brand. Trigger manually.
 on:
   workflow_dispatch:
     inputs:
-      workers:
-        description: "Parallel workers"
-        default: "3"
-      base_url:
-        description: "Deployed app base URL"
-        default: "https://encounter-object-id.vercel.app"
+      iterations:
+        description: "Curl iterations per worker"
+        default: "160"
 
 jobs:
   drive:
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 300
+    strategy:
+      matrix:
+        worker: [1, 2, 3]
     steps:
-      - name: Drive the import queue
+      - name: Drive queue (worker ${{ matrix.worker }})
         env:
-          BASE: ${{ github.event.inputs.base_url }}
-          WORKERS: ${{ github.event.inputs.workers }}
+          BASE: "https://encounter-object-id.vercel.app"
+          ITER: ${{ github.event.inputs.iterations }}
         run: |
-          set -u
-          worker() {
-            for i in $(seq 1 600); do
-              curl -s --max-time 75 "$BASE/brands/queue/run?budget_seconds=55&max_pages=10" -o /dev/null || true
-            done
-          }
-          for w in $(seq 1 "${WORKERS:-3}"); do worker & done
-
-          for t in $(seq 1 400); do
-            sleep 20
-            s=$(curl -s --max-time 30 "$BASE/brands/queue" || echo '{}')
-            pend=$(printf '%s' "$s" | python3 -c "import sys,json;d=json.load(sys.stdin);c=d.get('counts',{});print(c.get('pending',0)+c.get('running',0))" 2>/dev/null || echo 1)
-            prod=$(printf '%s' "$s" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('total_products_imported',0))" 2>/dev/null || echo 0)
-            echo "[tick $t] pending+running=$pend  total_products=$prod"
-            if [ "$pend" = "0" ]; then echo "QUEUE DRAINED"; break; fi
+          for i in $(seq 1 "${ITER:-160}"); do
+            code=$(curl -s --max-time 75 -o /dev/null -w "%{http_code}" "$BASE/brands/queue/run?budget_seconds=55&max_pages=10" || echo "000")
+            echo "worker ${{ matrix.worker }} iter $i -> $code"
           done
-          curl -s "$BASE/brands/queue" | python3 -c "import sys,json;d=json.load(sys.stdin);print('FINAL counts:',d.get('counts'));print('total products:',d.get('total_products_imported'))" || true
