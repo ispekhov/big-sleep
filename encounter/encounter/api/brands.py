@@ -286,6 +286,36 @@ def diagnose_brand(url: str) -> dict:
     }
 
 
+@router.get("/extract-test")
+def extract_test(url: str) -> dict:
+    """Temporary: start a whole-site Firecrawl extract job; returns the id."""
+    from ..importer.firecrawl import get_firecrawl_client
+
+    client = get_firecrawl_client()
+    if client is None:
+        return {"configured": False}
+    return {"job_id": client.start_extract(url)}
+
+
+@router.get("/extract-poll")
+def extract_poll(id: str) -> dict:
+    """Temporary: poll an extract job and show how many products it found."""
+    from ..importer.firecrawl import get_firecrawl_client
+
+    client = get_firecrawl_client()
+    if client is None:
+        return {"configured": False}
+    status, products = client.poll_extract(id)
+    return {
+        "status": status,
+        "count": len(products),
+        "sample": [
+            {"name": p.name, "price": p.price, "images": len(p.image_urls)}
+            for p in products[:8]
+        ],
+    }
+
+
 @router.get("/firecrawl-test")
 def firecrawl_test(url: str) -> dict:
     """Temporary: validate Firecrawl connectivity via a fast map() call."""

@@ -13,6 +13,7 @@ minor API shape change degrades gracefully instead of crashing an import.
 from __future__ import annotations
 
 import logging
+import re
 from urllib.parse import urljoin
 
 import httpx
@@ -47,6 +48,45 @@ _PRODUCT_SCHEMA = {
 _EXTRACT_PROMPT = (
     "Extract the single product shown on this page. Use absolute image URLs. "
     "If the page is not a product detail page, return an empty object."
+)
+
+# Schema for whole-site extraction: a list of every product on the site.
+_EXTRACT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "products": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "url": {"type": "string", "description": "Product page URL"},
+                    "category": {"type": "string"},
+                    "collection": {"type": "string"},
+                    "description": {"type": "string"},
+                    "materials": {"type": "string"},
+                    "dimensions": {"type": "string"},
+                    "price": {"type": "number"},
+                    "currency": {"type": "string"},
+                    "sku": {"type": "string"},
+                    "images": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Absolute image URLs",
+                    },
+                },
+                "required": ["name"],
+            },
+        }
+    },
+    "required": ["products"],
+}
+
+_EXTRACT_LIST_PROMPT = (
+    "Extract every product this brand sells across the whole site — furniture, "
+    "lighting, decor, accessories. For each, capture name, product page URL, "
+    "category, description, materials, dimensions, price, and absolute image "
+    "URLs. Be exhaustive; include all products, not just featured ones."
 )
 
 # URL fragments that suggest an individual product detail page.
@@ -159,6 +199,77 @@ class FirecrawlClient:
             product_url=url,
             image_urls=images,
         )
+
+    # --- whole-site extraction (the default for relic/JS sites) ----------
+    def start_extract(self, base_url: str) -> str | None:
+        """Kick off a Firecrawl extract job over the whole site; return job id."""
+        root = _root(base_url)
+        payload = {
+            "urls": [f"{root}/*"],
+            "schema": _EXTRACT_SCHEMA,
+            "prompt": _EXTRACT_LIST_PROMPT,
+        }
+        data = self._post(["/v1/extract", "/v2/extract"], payload)
+        if not data:
+            return None
+        return data.get("id") or data.get("jobId") or (data.get("data") or {}).get("id")
+
+    def poll_extract(self, job_id: str) -> tuple[str, list[ExtractedProduct]]:
+        """Poll an extract job: -> (status, products). status in
+        processing/completed/failed/error."""
+        for path in (f"/v1/extract/{job_id}", f"/v2/extract/{job_id}"):
+            try:
+                resp = self._http.get(path)
+            except Exception:
+                continue
+            if resp.status_code == 404:
+                continue
+            try:
+                d = resp.json()
+            except ValueError:
+                return ("error", [])
+            status = d.get("status") or d.get("state") or "processing"
+            if status not in ("completed", "failed"):
+                return ("processing", [])
+            if status == "failed":
+                return ("failed", [])
+            data = d.get("data") or {}
+            raw = data.get("products") if isinstance(data, dict) else data
+            if not isinstance(raw, list):
+                raw = []
+            products = [
+                _node_to_extracted(n, job_id)
+                for n in raw
+                if isinstance(n, dict) and n.get("name")
+            ]
+            return ("completed", products)
+        return ("error", [])
+
+
+def _root(url: str) -> str:
+    m = re.match(r"(https?://[^/]+)", url.rstrip("/"))
+    return m.group(1) if m else url.rstrip("/")
+
+
+def _node_to_extracted(node: dict, fallback_url: str) -> ExtractedProduct:
+    images = [
+        i
+        for i in (node.get("images") or [])
+        if isinstance(i, str) and i and not i.startswith("data:")
+    ]
+    return ExtractedProduct(
+        name=node.get("name"),
+        category=node.get("category"),
+        collection=node.get("collection"),
+        description=node.get("description"),
+        materials=node.get("materials"),
+        dimensions=node.get("dimensions"),
+        price=_to_float(node.get("price")),
+        currency=node.get("currency"),
+        sku=node.get("sku"),
+        product_url=node.get("url") or node.get("product_url") or fallback_url,
+        image_urls=images,
+    )
 
 
 def _config_from_db(key: str) -> str | None:
