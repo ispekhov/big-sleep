@@ -1,0 +1,46 @@
+name: encounter-import-batch
+
+# Drives the Encounter brand-import queue to completion. Runs on GitHub's
+# runners (open internet), hammering the deployed /brands/queue/run endpoint
+# with a few parallel workers until the queue is empty. Trigger manually.
+on:
+  workflow_dispatch:
+    inputs:
+      workers:
+        description: "Parallel workers"
+        default: "3"
+      base_url:
+        description: "Deployed app base URL"
+        default: "https://encounter-object-id.vercel.app"
+
+jobs:
+  drive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - name: Drive the import queue
+        env:
+          BASE: ${{ github.event.inputs.base_url }}
+          WORKERS: ${{ github.event.inputs.workers }}
+        run: |
+          set -u
+          worker() {
+            for i in $(seq 1 600); do
+              curl -s --max-time 75 "$BASE/brands/queue/run?budget_seconds=55&max_pages=10" -o /dev/null || true
+            done
+          }
+          # Launch parallel workers; SKIP LOCKED keeps them from colliding.
+          for w in $(seq 1 "${WORKERS:-3}"); do worker & done
+
+          # Monitor progress and stop when the queue is drained.
+          for t in $(seq 1 400); do
+            sleep 20
+            s=$(curl -s --max-time 30 "$BASE/brands/queue" || echo '{}')
+            read pend prod <<EOF
+          $(echo "$s" | python3 -c "import sys,json;d=json.load(sys.stdin);c=d.get('counts',{});print(c.get('pending',0)+c.get('running',0), d.get('total_products_imported',0))" 2>/dev/null || echo "1 0")
+          EOF
+            echo "[tick $t] pending+running=$pend  total_products=$prod"
+            if [ "$pend" = "0" ]; then echo "QUEUE DRAINED"; break; fi
+          done
+          # Final snapshot
+          curl -s "$BASE/brands/queue" | python3 -c "import sys,json;d=json.load(sys.stdin);print('FINAL counts:',d.get('counts'));print('total products:',d.get('total_products_imported'))" || true
