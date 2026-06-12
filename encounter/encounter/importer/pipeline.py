@@ -26,7 +26,11 @@ from ..util import make_soup
 from ..vectorstore import VectorStore, get_vector_store
 from .crawler import Crawler, FetchedPage, Fetcher
 from .extractor import ExtractedProduct, extract_product
-from .firecrawl import firecrawl_import, get_firecrawl_client
+from .firecrawl import (
+    firecrawl_extract_all,
+    firecrawl_import,
+    get_firecrawl_client,
+)
 from .shopify import fetch_shopify_products
 
 ImageDownloader = Callable[[str], "DownloadedImage | None"]
@@ -144,18 +148,23 @@ class ImportPipeline:
             _ingest(extracted)
 
         # Layer 4: Firecrawl fallback for JS-rendered / WAF-blocked sites that
-        # the free HTTP path couldn't read.
+        # the free HTTP path couldn't read. Whole-site extract first (gets the
+        # FULL catalogue of relic/custom sites in one job); fall back to
+        # per-page scraping only if the extract job came back empty.
         used_firecrawl = False
         if products_imported == 0:
             client = get_firecrawl_client()
             if client is not None:
                 used_firecrawl = True
-                for ex in firecrawl_import(
-                    start_url,
-                    client,
-                    max_products=self.settings.firecrawl_max_products,
-                ):
+                for ex in firecrawl_extract_all(start_url, client):
                     _ingest(ex)
+                if products_imported == 0:
+                    for ex in firecrawl_import(
+                        start_url,
+                        client,
+                        max_products=self.settings.firecrawl_max_products,
+                    ):
+                        _ingest(ex)
 
         self.session.commit()
         return ImportSummary(
