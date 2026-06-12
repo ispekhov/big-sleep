@@ -349,7 +349,7 @@ def import_brand(
     # Defer image download/embedding so the (60s) request returns fast with the
     # full product list; the /queue/embed worker fills in images afterward.
     return pipeline.run(
-        req.url, max_pages=req.max_pages or 25, download_images=False
+        req.url, max_pages=req.max_pages or 80, download_images=False
     )
 
 
@@ -364,7 +364,7 @@ def import_brand_get(
         session, fetcher=make_http_fetcher(), downloader=make_http_downloader()
     )
     return pipeline.run(
-        url, max_pages=max_pages or 25, download_images=False
+        url, max_pages=max_pages or 80, download_images=False
     )
 
 
