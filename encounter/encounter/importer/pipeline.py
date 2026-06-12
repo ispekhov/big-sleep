@@ -69,7 +69,14 @@ class ImportPipeline:
         self.vector_store = vector_store or get_vector_store()
         self.settings = get_settings()
 
-    def run(self, start_url: str, max_pages: int | None = None) -> ImportSummary:
+    def run(
+        self,
+        start_url: str,
+        max_pages: int | None = None,
+        *,
+        download_images: bool = True,
+        product_limit: int | None = None,
+    ) -> ImportSummary:
         homepage = self.fetcher(start_url)
         brand_name = _brand_name_from_site(start_url, homepage)
         brand = self._get_or_create_brand(brand_name, start_url)
@@ -79,10 +86,13 @@ class ImportPipeline:
         images_imported = 0
         needs_review = 0
         cap = max_pages or self.settings.crawl_max_pages
+        plimit = product_limit or self.settings.import_product_limit
 
         def _ingest(ex) -> None:
             nonlocal products_imported, images_imported, needs_review
-            product, n_images, flagged = self._persist_product(brand, source, ex)
+            product, n_images, flagged = self._persist_product(
+                brand, source, ex, download_images=download_images
+            )
             if product is None:
                 return
             products_imported += 1
@@ -92,7 +102,7 @@ class ImportPipeline:
         # Layer 1: Shopify products.json (clean, complete) when available.
         shopify = fetch_shopify_products(start_url, self.fetcher)
         if shopify:
-            for ex in shopify[:cap]:
+            for ex in shopify[:plimit]:
                 _ingest(ex)
             self.session.commit()
             return ImportSummary(
@@ -160,7 +170,12 @@ class ImportPipeline:
         return source
 
     def _persist_product(
-        self, brand: Brand, source: Source, ex: ExtractedProduct
+        self,
+        brand: Brand,
+        source: Source,
+        ex: ExtractedProduct,
+        *,
+        download_images: bool = True,
     ) -> tuple[Product | None, int, bool]:
         # Skip duplicates (same brand + product URL).
         if ex.product_url:
@@ -211,11 +226,34 @@ class ImportPipeline:
         n_images = 0
         cap = self.settings.crawl_max_images_per_product
         for img_url in ex.image_urls[:cap]:
-            if self._persist_image(product, source, img_url):
+            if self._persist_image(product, source, img_url, download_images):
                 n_images += 1
         return product, n_images, flagged
 
-    def _persist_image(self, product: Product, source: Source, img_url: str) -> bool:
+    def _persist_image(
+        self,
+        product: Product,
+        source: Source,
+        img_url: str,
+        download_images: bool = True,
+    ) -> bool:
+        # Deferred mode: record the image (URL only) now; a separate pass
+        # downloads + embeds it. Lets bulk imports pull full catalogues fast.
+        if not download_images:
+            self.session.add(
+                Image(
+                    product_id=product.id,
+                    source_id=source.id,
+                    image_url=img_url,
+                    storage_key=None,
+                    image_type=ImageType.official_product_image,
+                    embedding=None,
+                    verification_status=VerificationStatus.ai_validated,
+                )
+            )
+            self.session.flush()
+            return True
+
         downloaded = self.downloader(img_url)
         if downloaded is None or not downloaded.data:
             return False

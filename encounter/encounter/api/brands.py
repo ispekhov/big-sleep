@@ -105,7 +105,11 @@ def queue_run(
                 fetcher=make_http_fetcher(),
                 downloader=make_http_downloader(),
             )
-            summary = pipeline.run(row.url, max_pages=max_pages)
+            # Bulk mode: pull the full catalogue (metadata) fast and defer
+            # image download/embedding to the /queue/embed worker.
+            summary = pipeline.run(
+                row.url, max_pages=max_pages, download_images=False
+            )
             row.products_imported = summary.products_imported
             row.images_imported = summary.images_imported
             if "Firecrawl" in (summary.message or ""):
@@ -167,6 +171,62 @@ def _kick_self(n: int) -> int:
 def queue_kick(n: int = 5) -> dict:
     """Start the autonomous batch engine with ``n`` self-sustaining workers."""
     return {"kicked": _kick_self(n)}
+
+
+@router.get("/queue/embed")
+def queue_embed(
+    n: int = 40, session: Session = Depends(get_session)
+) -> dict:
+    """Download + embed a batch of pending product images (the deferred pass).
+
+    Picks images with no embedding yet, fetches the bytes (Chrome-impersonating
+    client), embeds them, and indexes them for visual search. Failed downloads
+    are marked so they aren't retried forever.
+    """
+    from ..embeddings import get_embedder
+    from ..enums import ImageType
+    from ..importer.pipeline import make_http_downloader
+    from ..models import Image
+    from ..vectorstore import get_vector_store
+
+    embedder = get_embedder()
+    store = get_vector_store()
+    download = make_http_downloader()
+
+    rows = list(
+        session.scalars(
+            select(Image)
+            .where(
+                Image.embedding.is_(None),
+                Image.embedding_model.is_(None),
+                Image.product_id.is_not(None),
+                Image.image_type == ImageType.official_product_image,
+            )
+            .limit(n)
+        ).all()
+    )
+    embedded = 0
+    for img in rows:
+        downloaded = download(img.image_url)
+        if downloaded is None or not downloaded.data:
+            img.embedding_model = "failed"  # don't retry forever
+            continue
+        try:
+            vector = embedder.embed(downloaded.data)
+        except Exception:  # noqa: BLE001
+            img.embedding_model = "failed"
+            continue
+        img.embedding = [float(x) for x in vector.tolist()]
+        img.embedding_model = embedder.name
+        session.flush()
+        store.upsert(
+            img.id,
+            vector,
+            {"product_id": img.product_id, "image_type": img.image_type.value},
+        )
+        embedded += 1
+    session.commit()
+    return {"candidates": len(rows), "embedded": embedded}
 
 
 @router.get("/diagnose")
