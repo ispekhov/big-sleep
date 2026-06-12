@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, selectinload
 
 from ..db import get_session
@@ -12,10 +12,100 @@ from ..importer.pipeline import (
     make_http_downloader,
     make_http_fetcher,
 )
-from ..models import Brand, Product
+from ..models import Brand, BrandQueue, Product
 from ..schemas import BrandOut, ImportRequest, ImportSummary, ProductOut
 
 router = APIRouter(prefix="/brands", tags=["brands"])
+
+
+@router.get("/queue")
+def queue_status(session: Session = Depends(get_session)) -> dict:
+    """Batch queue overview: per-brand status + rollup counts."""
+    from collections import Counter
+
+    rows = list(session.scalars(select(BrandQueue).order_by(BrandQueue.id)).all())
+    counts = Counter(r.status for r in rows)
+    total_products = sum(r.products_imported for r in rows)
+    return {
+        "total_brands": len(rows),
+        "counts": dict(counts),
+        "total_products_imported": total_products,
+        "brands": [
+            {
+                "id": r.id,
+                "name": r.name,
+                "url": r.url,
+                "status": r.status,
+                "classification": r.classification,
+                "products": r.products_imported,
+                "images": r.images_imported,
+                "attempts": r.attempts,
+                "error": r.error,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/queue/run")
+def queue_run(
+    max_pages: int = 12, session: Session = Depends(get_session)
+) -> dict:
+    """Process the next pending brand in the queue (one job per call).
+
+    Designed to be called repeatedly: each call imports one brand (using the
+    full multi-strategy + Firecrawl pipeline) and records the outcome, so the
+    batch is resilient to timeouts — a brand that exceeds the serverless limit
+    is retried, then parked as ``failed_timeout`` for the background worker.
+    """
+    # Park brands that have repeatedly timed out so the queue keeps moving.
+    session.execute(
+        update(BrandQueue)
+        .where(BrandQueue.status == "pending", BrandQueue.attempts >= 3)
+        .values(status="failed_timeout")
+    )
+    session.commit()
+
+    row = session.scalar(
+        select(BrandQueue)
+        .where(BrandQueue.status == "pending")
+        .order_by(BrandQueue.id)
+        .limit(1)
+    )
+    if row is None:
+        return {"done": True, "message": "queue empty — nothing pending"}
+
+    row.attempts += 1
+    session.commit()  # persist the attempt before the (possibly fatal) import
+
+    try:
+        pipeline = ImportPipeline(
+            session,
+            fetcher=make_http_fetcher(),
+            downloader=make_http_downloader(),
+        )
+        summary = pipeline.run(row.url, max_pages=max_pages)
+        row.products_imported = summary.products_imported
+        row.images_imported = summary.images_imported
+        row.classification = (
+            "firecrawl" if "Firecrawl" in (summary.message or "") else "http"
+        )
+        row.status = "done" if summary.products_imported > 0 else "empty"
+        if not row.name and summary.brand:
+            row.name = summary.brand
+    except Exception as exc:  # noqa: BLE001
+        row.status = "failed"
+        row.error = str(exc)[:500]
+    session.commit()
+    return {
+        "id": row.id,
+        "name": row.name,
+        "url": row.url,
+        "status": row.status,
+        "classification": row.classification,
+        "products": row.products_imported,
+        "images": row.images_imported,
+    }
 
 
 @router.get("/diagnose")

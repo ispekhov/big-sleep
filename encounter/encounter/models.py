@@ -145,3 +145,20 @@ class Image(Base, TimestampMixin):
 
     source: Mapped[Source | None] = relationship(back_populates="images")
     product: Mapped[Product | None] = relationship(back_populates="images")
+
+
+class BrandQueue(Base, TimestampMixin):
+    """A queued brand to import in the batch pipeline (one job per brand)."""
+
+    __tablename__ = "brand_queue"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str | None] = mapped_column(String(255))
+    url: Mapped[str] = mapped_column(String(1024), unique=True)
+    # pending -> done / empty / failed / failed_timeout
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    classification: Mapped[str | None] = mapped_column(String(64))
+    products_imported: Mapped[int] = mapped_column(default=0)
+    images_imported: Mapped[int] = mapped_column(default=0)
+    attempts: Mapped[int] = mapped_column(default=0)
+    error: Mapped[str | None] = mapped_column(Text)
