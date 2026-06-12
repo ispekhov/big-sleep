@@ -292,6 +292,22 @@ $('#cat-refresh').onclick = () => { catOverviewLoaded = false; loadCatalogue(); 
 $('#cat-brand').onchange = () => { if ($('#cat-brand').value) showBrand($('#cat-brand').value); };
 $('#cat-back').onclick = (e) => { e.preventDefault(); showOverview(); };
 
+// Event delegation: one listener on the always-present containers, so clicks
+// work no matter when/how the cards are (re)rendered.
+$('#brand-cards').addEventListener('click', (e) => {
+  const card = e.target.closest('[data-bid]');
+  if (card && card.dataset.bid) showBrand(card.dataset.bid);
+});
+$('#cat-out').addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-del]');
+  if (!btn) return;
+  if (!confirm('Remove this from the catalogue? This deletes it from visual search too.')) return;
+  try {
+    await api('/products/' + btn.dataset.del, { method: 'DELETE' });
+    const card = btn.closest('[data-pid]'); if (card) card.remove();
+  } catch (e) { alert(e.message); }
+});
+
 function showOverview() {
   $('#cat-detail').hidden = true;
   $('#brand-cards').hidden = false;
@@ -321,9 +337,7 @@ async function loadCatalogue() {
         <div style="margin-top:6px;font-weight:600">${b.name}</div>
         <small class="muted">${b.products} product${b.products===1?'':'s'}${b.needs_review?` · <span style="color:var(--warn)">${b.needs_review} to review</span>`:''}</small>
       </div>`).join('') : '<p class="muted">No products yet — import a brand first.</p>';
-    document.querySelectorAll('#brand-cards [data-bid]').forEach(c =>
-      c.onclick = () => showBrand(c.dataset.bid));
-    catOverviewLoaded = true;
+    catOverviewLoaded = true;  // clicks handled by delegation on #brand-cards
   } catch (e) { $('#brand-cards').innerHTML = `<p class="err">${e.message}</p>`; }
 }
 
@@ -339,13 +353,7 @@ async function showBrand(bid) {
     $('#cat-count').textContent = `${items.length} product${items.length===1?'':'s'}`;
     $('#cat-out').innerHTML = items.length ? items.map(p => productTile(p)).join('')
       : '<p class="muted">No products.</p>';
-    document.querySelectorAll('#cat-out [data-del]').forEach(b => b.onclick = async () => {
-      if (!confirm('Remove this from the catalogue? This deletes it from visual search too.')) return;
-      try {
-        await api('/products/' + b.dataset.del, { method: 'DELETE' });
-        const card = b.closest('[data-pid]'); if (card) card.remove();
-      } catch (e) { alert(e.message); }
-    });
+    // delete clicks handled by delegation on #cat-out
   } catch (e) { $('#cat-out').innerHTML = `<p class="err">${e.message}</p>`; }
 }
 
