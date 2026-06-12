@@ -90,3 +90,20 @@ def correct_product(
     session.commit()
     session.refresh(product)
     return product
+
+
+@router.delete("/{product_id}")
+def delete_product(
+    product_id: int, session: Session = Depends(get_session)
+) -> dict:
+    """Remove a wrongly-extracted product (e.g. a swatch or non-product page).
+
+    Cascades to its images and variants. Used by the Catalogue QA view's
+    "Not a product" action.
+    """
+    product = session.get(Product, product_id)
+    if product is None:
+        raise HTTPException(404, "Product not found")
+    session.delete(product)  # ORM cascade removes images + variants
+    session.commit()
+    return {"deleted": product_id}

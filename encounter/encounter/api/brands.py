@@ -356,6 +356,64 @@ def import_brand(
     )
 
 
+@router.get("/import-progress")
+def import_progress(
+    url: str, session: Session = Depends(get_session)
+) -> dict:
+    """Live counts for the brand at ``url`` — drives the import progress ticker.
+
+    The importer commits products in small batches, so polling this while an
+    import runs shows the catalogue filling up in real time.
+    """
+    from sqlalchemy import func, or_
+
+    from ..importer.pipeline import _registrable_domain
+    from ..models import Image
+
+    domain = _registrable_domain(url)
+    brand_ids = list(
+        session.scalars(
+            select(Brand.id).where(
+                or_(
+                    Brand.website.ilike(f"%/{domain}%"),
+                    Brand.website.ilike(f"%.{domain}%"),
+                )
+            )
+        ).all()
+    )
+    if not brand_ids:
+        return {"domain": domain, "products": 0, "images": 0, "needs_review": 0}
+    products = (
+        session.scalar(
+            select(func.count(Product.id)).where(Product.brand_id.in_(brand_ids))
+        )
+        or 0
+    )
+    flagged = (
+        session.scalar(
+            select(func.count(Product.id)).where(
+                Product.brand_id.in_(brand_ids), Product.needs_review.is_(True)
+            )
+        )
+        or 0
+    )
+    images = (
+        session.scalar(
+            select(func.count(Image.id))
+            .select_from(Image)
+            .join(Product, Product.id == Image.product_id)
+            .where(Product.brand_id.in_(brand_ids))
+        )
+        or 0
+    )
+    return {
+        "domain": domain,
+        "products": int(products),
+        "images": int(images),
+        "needs_review": int(flagged),
+    }
+
+
 @router.get("/import", response_model=ImportSummary)
 def import_brand_get(
     url: str,
