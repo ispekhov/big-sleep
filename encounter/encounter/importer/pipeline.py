@@ -261,19 +261,44 @@ class ImportPipeline:
         return True
 
 
-# --- default httpx-backed factory ----------------------------------------
-def make_http_fetcher() -> Fetcher:
+# --- default browser-impersonating factory -------------------------------
+# Prefer curl_cffi (impersonates Chrome's TLS/JA3 + HTTP-2 fingerprint, which
+# defeats fingerprint-based WAFs) and fall back to httpx where unavailable.
+def _browser_get():
     settings = get_settings()
-    client = httpx.Client(
-        headers={"User-Agent": settings.crawl_user_agent},
-        timeout=settings.crawl_request_timeout,
-        follow_redirects=True,
-    )
+    try:
+        from curl_cffi import requests as creq
+
+        session = creq.Session(
+            impersonate="chrome",
+            timeout=settings.crawl_request_timeout,
+            allow_redirects=True,
+        )
+
+        def get(url: str):
+            return session.get(url)
+
+        return get
+    except Exception:
+        client = httpx.Client(
+            headers={"User-Agent": settings.crawl_user_agent},
+            timeout=settings.crawl_request_timeout,
+            follow_redirects=True,
+        )
+
+        def get(url: str):
+            return client.get(url)
+
+        return get
+
+
+def make_http_fetcher() -> Fetcher:
+    get = _browser_get()
 
     def fetch(url: str) -> FetchedPage | None:
         try:
-            resp = client.get(url)
-        except httpx.HTTPError:
+            resp = get(url)
+        except Exception:
             return None
         return FetchedPage(
             url=str(resp.url),
@@ -286,17 +311,12 @@ def make_http_fetcher() -> Fetcher:
 
 
 def make_http_downloader() -> ImageDownloader:
-    settings = get_settings()
-    client = httpx.Client(
-        headers={"User-Agent": settings.crawl_user_agent},
-        timeout=settings.crawl_request_timeout,
-        follow_redirects=True,
-    )
+    get = _browser_get()
 
     def download(url: str) -> DownloadedImage | None:
         try:
-            resp = client.get(url)
-        except httpx.HTTPError:
+            resp = get(url)
+        except Exception:
             return None
         if resp.status_code >= 400 or not resp.content:
             return None
