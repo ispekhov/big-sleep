@@ -49,63 +49,86 @@ def queue_status(session: Session = Depends(get_session)) -> dict:
 
 @router.get("/queue/run")
 def queue_run(
-    max_pages: int = 12, session: Session = Depends(get_session)
+    budget_seconds: int = 40,
+    max_pages: int = 10,
+    session: Session = Depends(get_session),
 ) -> dict:
-    """Process the next pending brand in the queue (one job per call).
+    """Process pending queued brands for up to ``budget_seconds`` (one job each).
 
-    Designed to be called repeatedly: each call imports one brand (using the
-    full multi-strategy + Firecrawl pipeline) and records the outcome, so the
-    batch is resilient to timeouts — a brand that exceeds the serverless limit
-    is retried, then parked as ``failed_timeout`` for the background worker.
+    Safe to call concurrently: brands are claimed with ``FOR UPDATE SKIP
+    LOCKED`` so parallel workers never grab the same brand. Stale ``running``
+    rows (a worker that exceeded the time limit) are recycled, then parked as
+    ``failed_timeout`` after 3 attempts so the batch always makes progress.
     """
-    # Park brands that have repeatedly timed out so the queue keeps moving.
-    session.execute(
-        update(BrandQueue)
-        .where(BrandQueue.status == "pending", BrandQueue.attempts >= 3)
-        .values(status="failed_timeout")
-    )
-    session.commit()
+    import time
 
-    row = session.scalar(
-        select(BrandQueue)
-        .where(BrandQueue.status == "pending")
-        .order_by(BrandQueue.id)
-        .limit(1)
-    )
-    if row is None:
-        return {"done": True, "message": "queue empty — nothing pending"}
+    from sqlalchemy import text
 
-    row.attempts += 1
-    session.commit()  # persist the attempt before the (possibly fatal) import
+    is_pg = session.bind.dialect.name == "postgresql"
 
-    try:
-        pipeline = ImportPipeline(
-            session,
-            fetcher=make_http_fetcher(),
-            downloader=make_http_downloader(),
+    # Recycle brands left 'running' by a worker that hit the serverless limit.
+    if is_pg:
+        try:
+            session.execute(
+                text(
+                    "update brand_queue set status = case when attempts >= 3 "
+                    "then 'failed_timeout' else 'pending' end, updated_at = now() "
+                    "where status = 'running' "
+                    "and updated_at < now() - interval '150 seconds'"
+                )
+            )
+            session.commit()
+        except Exception:
+            session.rollback()
+
+    deadline = time.monotonic() + budget_seconds
+    processed = []
+    while time.monotonic() < deadline:
+        stmt = (
+            select(BrandQueue)
+            .where(BrandQueue.status == "pending")
+            .order_by(BrandQueue.id)
+            .limit(1)
         )
-        summary = pipeline.run(row.url, max_pages=max_pages)
-        row.products_imported = summary.products_imported
-        row.images_imported = summary.images_imported
-        row.classification = (
-            "firecrawl" if "Firecrawl" in (summary.message or "") else "http"
+        if is_pg:
+            stmt = stmt.with_for_update(skip_locked=True)
+        row = session.scalar(stmt)
+        if row is None:
+            break
+        row.status = "running"
+        row.attempts += 1
+        session.commit()  # release the row lock; 'running' now guards it
+
+        try:
+            pipeline = ImportPipeline(
+                session,
+                fetcher=make_http_fetcher(),
+                downloader=make_http_downloader(),
+            )
+            summary = pipeline.run(row.url, max_pages=max_pages)
+            row.products_imported = summary.products_imported
+            row.images_imported = summary.images_imported
+            if "Firecrawl" in (summary.message or ""):
+                row.classification = "firecrawl"
+            elif summary.pages_crawled == 0 and summary.products_imported:
+                row.classification = "shopify"
+            else:
+                row.classification = "http"
+            row.status = "done" if summary.products_imported > 0 else "empty"
+            if not row.name and summary.brand:
+                row.name = summary.brand
+        except Exception as exc:  # noqa: BLE001
+            row.status = "failed"
+            row.error = str(exc)[:300]
+        session.commit()
+        processed.append(
+            {
+                "name": row.name,
+                "status": row.status,
+                "products": row.products_imported,
+            }
         )
-        row.status = "done" if summary.products_imported > 0 else "empty"
-        if not row.name and summary.brand:
-            row.name = summary.brand
-    except Exception as exc:  # noqa: BLE001
-        row.status = "failed"
-        row.error = str(exc)[:500]
-    session.commit()
-    return {
-        "id": row.id,
-        "name": row.name,
-        "url": row.url,
-        "status": row.status,
-        "classification": row.classification,
-        "products": row.products_imported,
-        "images": row.images_imported,
-    }
+    return {"processed": len(processed), "items": processed}
 
 
 @router.get("/diagnose")
