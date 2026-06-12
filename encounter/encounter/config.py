@@ -82,8 +82,6 @@ class Settings(BaseSettings):
     # --- Importer / crawler ----------------------------------------------
     crawl_max_pages: int = 200
     crawl_max_images_per_product: int = 8
-    # Max products to ingest per brand in one import (full catalogues).
-    import_product_limit: int = 500
     # Many brand sites sit behind WAFs that 403 non-browser agents, so we
     # present a mainstream browser UA while still honouring robots.txt.
     crawl_user_agent: str = (

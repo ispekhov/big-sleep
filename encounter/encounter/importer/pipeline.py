@@ -99,7 +99,9 @@ class ImportPipeline:
         images_imported = 0
         needs_review = 0
         cap = max_pages or self.settings.crawl_max_pages
-        plimit = product_limit or self.settings.import_product_limit
+        # No product cap by default — import the brand's FULL catalogue. A
+        # limit is only applied if a caller explicitly passes one.
+        plimit = product_limit
 
         # Pre-fetch this brand's existing product URLs once (in-memory dedup)
         # instead of a SELECT per product — critical for big catalogues.
