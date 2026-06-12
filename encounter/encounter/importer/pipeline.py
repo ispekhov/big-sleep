@@ -88,10 +88,22 @@ class ImportPipeline:
         cap = max_pages or self.settings.crawl_max_pages
         plimit = product_limit or self.settings.import_product_limit
 
+        # Pre-fetch this brand's existing product URLs once (in-memory dedup)
+        # instead of a SELECT per product — critical for big catalogues.
+        existing_urls: set[str] = set(
+            self.session.scalars(
+                select(Product.product_url).where(
+                    Product.brand_id == brand.id,
+                    Product.product_url.is_not(None),
+                )
+            ).all()
+        )
+
         def _ingest(ex) -> None:
             nonlocal products_imported, images_imported, needs_review
             product, n_images, flagged = self._persist_product(
-                brand, source, ex, download_images=download_images
+                brand, source, ex, download_images=download_images,
+                existing_urls=existing_urls,
             )
             if product is None:
                 return
@@ -176,17 +188,24 @@ class ImportPipeline:
         ex: ExtractedProduct,
         *,
         download_images: bool = True,
+        existing_urls: set[str] | None = None,
     ) -> tuple[Product | None, int, bool]:
-        # Skip duplicates (same brand + product URL).
+        # Skip duplicates (same brand + product URL) using the in-memory set
+        # when available (avoids a DB round-trip per product).
         if ex.product_url:
-            existing = self.session.scalar(
-                select(Product).where(
-                    Product.brand_id == brand.id,
-                    Product.product_url == ex.product_url,
+            if existing_urls is not None:
+                if ex.product_url in existing_urls:
+                    return None, 0, False
+                existing_urls.add(ex.product_url)
+            else:
+                existing = self.session.scalar(
+                    select(Product).where(
+                        Product.brand_id == brand.id,
+                        Product.product_url == ex.product_url,
+                    )
                 )
-            )
-            if existing is not None:
-                return None, 0, False
+                if existing is not None:
+                    return None, 0, False
 
         flagged = not ex.required_present or ex.confidence < 0.4
         product = Product(
@@ -240,6 +259,7 @@ class ImportPipeline:
         # Deferred mode: record the image (URL only) now; a separate pass
         # downloads + embeds it. Lets bulk imports pull full catalogues fast.
         if not download_images:
+            # No per-image flush — added rows commit in one batch with the run.
             self.session.add(
                 Image(
                     product_id=product.id,
@@ -251,7 +271,6 @@ class ImportPipeline:
                     verification_status=VerificationStatus.ai_validated,
                 )
             )
-            self.session.flush()
             return True
 
         downloaded = self.downloader(img_url)
