@@ -72,7 +72,10 @@ class Settings(BaseSettings):
     # ENCOUNTER_FIRECRAWL_API_KEY env var, never committed.
     firecrawl_api_key: str | None = None
     firecrawl_base_url: str = "https://api.firecrawl.dev"
-    firecrawl_max_products: int = 20
+    # Hard cap on per-brand Firecrawl scrapes (1 credit each). Bounds cost on
+    # relic/WAF sites: we map the site once, then scrape only this many of the
+    # discovered product URLs — never the whole site.
+    firecrawl_max_products: int = 40
     firecrawl_timeout: float = 45.0
 
     # Public base URL of this deployment, used by the batch engine to chain

@@ -26,11 +26,7 @@ from ..util import make_soup
 from ..vectorstore import VectorStore, get_vector_store
 from .crawler import Crawler, FetchedPage, Fetcher
 from .extractor import ExtractedProduct, extract_product
-from .firecrawl import (
-    firecrawl_extract_all,
-    firecrawl_import,
-    get_firecrawl_client,
-)
+from .firecrawl import firecrawl_import, get_firecrawl_client
 from .shopify import fetch_shopify_products
 
 ImageDownloader = Callable[[str], "DownloadedImage | None"]
@@ -172,24 +168,24 @@ class ImportPipeline:
                 continue
             _ingest(extracted)
 
-        # Layer 4: Firecrawl fallback for JS-rendered / WAF-blocked sites that
-        # the free HTTP path couldn't read. Whole-site extract first (gets the
-        # FULL catalogue of relic/custom sites in one job); fall back to
-        # per-page scraping only if the extract job came back empty.
+        # Layer 4: Firecrawl fallback for JS-rendered / WAF-blocked sites the
+        # free HTTP path couldn't read. BOUNDED + GATED to protect credits:
+        #  - only when the free paths found nothing AND we don't already have
+        #    a catalogue for this brand (so re-runs never re-bill a relic site);
+        #  - it maps the site once and scrapes only the product URLs, capped —
+        #    never a whole-site /* crawl that bills for blogs/about/account pages.
         used_firecrawl = False
-        if products_imported == 0:
+        already_have_catalogue = len(existing_urls) >= 5
+        if products_imported == 0 and not already_have_catalogue:
             client = get_firecrawl_client()
             if client is not None:
                 used_firecrawl = True
-                for ex in firecrawl_extract_all(start_url, client):
+                for ex in firecrawl_import(
+                    start_url,
+                    client,
+                    max_products=self.settings.firecrawl_max_products,
+                ):
                     _ingest(ex)
-                if products_imported == 0:
-                    for ex in firecrawl_import(
-                        start_url,
-                        client,
-                        max_products=self.settings.firecrawl_max_products,
-                    ):
-                        _ingest(ex)
 
         self.session.commit()
         return ImportSummary(
