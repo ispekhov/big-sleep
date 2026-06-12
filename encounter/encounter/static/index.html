@@ -84,15 +84,21 @@
   <!-- CATALOGUE -->
   <section id="tab-catalogue" hidden>
     <div class="panel">
-      <h2>Imported catalogue</h2>
-      <p class="muted">Eyeball what was extracted. Use “Not a product” to drop swatches, banners, or anything that isn't a real product.</p>
+      <h2>Catalogue by brand</h2>
+      <p class="muted">Pick a brand to check what was extracted. Use “Not a product” to drop swatches, banners, or anything that isn't a real product.</p>
       <div class="row">
-        <div><label>Filter by brand</label>
-          <select id="cat-brand"><option value="">All brands</option></select></div>
-        <div><label>&nbsp;</label><button class="go" id="cat-refresh" style="margin-top:0">Refresh</button></div>
+        <div><label>Jump to brand</label>
+          <select id="cat-brand"><option value="">— choose a brand —</option></select></div>
+        <div><label>&nbsp;</label><button class="go" id="cat-refresh" style="margin-top:0">Refresh brands</button></div>
       </div>
-      <div id="cat-count" class="muted" style="margin-top:8px"></div>
-      <div id="cat-out" class="grid" style="margin-top:14px"></div>
+      <div id="brand-count" class="muted" style="margin-top:8px"></div>
+      <div id="brand-cards" class="grid" style="margin-top:14px"></div>
+      <div id="cat-detail" hidden style="margin-top:14px">
+        <a href="#" id="cat-back" class="muted">← all brands</a>
+        <h2 id="cat-title" style="margin:10px 0 4px"></h2>
+        <div id="cat-count" class="muted"></div>
+        <div id="cat-out" class="grid" style="margin-top:10px"></div>
+      </div>
     </div>
   </section>
 
@@ -276,45 +282,61 @@ function bindCorrection(imageId) {
   };
 }
 
-// CATALOGUE
-let catBrandsLoaded = false;
-$('#cat-refresh').onclick = loadCatalogue;
-$('#cat-brand').onchange = loadCatalogue;
+// CATALOGUE — a by-brand overview that drills into one brand's products.
+let catOverviewLoaded = false;
+const brandName = {};
+$('#cat-refresh').onclick = () => { catOverviewLoaded = false; loadCatalogue(); };
+$('#cat-brand').onchange = () => { if ($('#cat-brand').value) showBrand($('#cat-brand').value); };
+$('#cat-back').onclick = (e) => { e.preventDefault(); showOverview(); };
+
+function showOverview() {
+  $('#cat-detail').hidden = true;
+  $('#brand-cards').hidden = false;
+  $('#brand-count').hidden = false;
+  $('#cat-brand').value = '';
+}
+
 async function loadCatalogue() {
-  if (!catBrandsLoaded) {
-    try {
-      const brands = await api('/brands');
-      const sel = $('#cat-brand');
-      brands.forEach(b => {
-        const o = document.createElement('option');
-        o.value = b.id; o.textContent = b.name; sel.appendChild(o);
-      });
-      catBrandsLoaded = true;
-    } catch (e) {}
-  }
-  $('#cat-out').innerHTML = '<p class="muted">Loading…</p>';
+  showOverview();
+  if (catOverviewLoaded) return;
+  $('#brand-cards').innerHTML = '<p class="muted">Loading brands…</p>';
   try {
-    const bid = $('#cat-brand').value;
-    const q = bid ? `/products?limit=200&brand_id=${bid}` : '/products?limit=200';
-    const items = await api(q);
+    const rows = await api('/brands/overview');
+    const sel = $('#cat-brand');
+    sel.length = 1;
+    const totalP = rows.reduce((a, b) => a + b.products, 0);
+    $('#brand-count').textContent =
+      `${rows.length} brands · ${totalP.toLocaleString()} products`;
+    rows.forEach(b => {
+      brandName[b.id] = b.name;
+      const o = document.createElement('option');
+      o.value = b.id; o.textContent = `${b.name} (${b.products})`; sel.appendChild(o);
+    });
+    $('#brand-cards').innerHTML = rows.length ? rows.map(b => `
+      <div class="thumb" data-bid="${b.id}" style="cursor:pointer">
+        <img src="${b.sample||''}" loading="lazy" onerror="this.style.opacity=0.15"/>
+        <div style="margin-top:6px;font-weight:600">${b.name}</div>
+        <small class="muted">${b.products} product${b.products===1?'':'s'}${b.needs_review?` · <span style="color:var(--warn)">${b.needs_review} to review</span>`:''}</small>
+      </div>`).join('') : '<p class="muted">No products yet — import a brand first.</p>';
+    document.querySelectorAll('#brand-cards [data-bid]').forEach(c =>
+      c.onclick = () => showBrand(c.dataset.bid));
+    catOverviewLoaded = true;
+  } catch (e) { $('#brand-cards').innerHTML = `<p class="err">${e.message}</p>`; }
+}
+
+async function showBrand(bid) {
+  $('#brand-cards').hidden = true;
+  $('#brand-count').hidden = true;
+  $('#cat-detail').hidden = false;
+  $('#cat-title').textContent = brandName[bid] || 'Brand';
+  $('#cat-out').innerHTML = '<p class="muted">Loading…</p>';
+  $('#cat-brand').value = bid;
+  try {
+    const items = await api(`/products?limit=1000&brand_id=${bid}`);
     $('#cat-count').textContent = `${items.length} product${items.length===1?'':'s'}`;
-    if (!items.length) {
-      $('#cat-out').innerHTML = '<p class="muted">No products yet — import a brand first.</p>';
-      return;
-    }
-    $('#cat-out').innerHTML = items.map(p => {
-      const img = (p.images[0]||{}).image_url || '';
-      return `<div class="thumb" data-pid="${p.id}">
-        <img src="${img}" loading="lazy" onerror="this.style.opacity=0.2"/>
-        <div style="margin-top:6px">${p.name||''}</div>
-        <small class="muted">${(p.brand||{}).name||''}${p.category? ' · '+p.category:''}</small>
-        <div><small>${money(p.price, p.currency)}</small></div>
-        ${p.needs_review ? '<div class="badge-rev">review</div>' : ''}
-        ${p.product_url ? `<div><a class="muted" href="${p.product_url}" target="_blank" rel="noopener"><small>source ↗</small></a></div>` : ''}
-        <button class="del" data-del="${p.id}">✕ Not a product</button>
-      </div>`;
-    }).join('');
-    document.querySelectorAll('[data-del]').forEach(b => b.onclick = async () => {
+    $('#cat-out').innerHTML = items.length ? items.map(p => productTile(p)).join('')
+      : '<p class="muted">No products.</p>';
+    document.querySelectorAll('#cat-out [data-del]').forEach(b => b.onclick = async () => {
       if (!confirm('Remove this from the catalogue? This deletes it from visual search too.')) return;
       try {
         await api('/products/' + b.dataset.del, { method: 'DELETE' });
@@ -322,6 +344,18 @@ async function loadCatalogue() {
       } catch (e) { alert(e.message); }
     });
   } catch (e) { $('#cat-out').innerHTML = `<p class="err">${e.message}</p>`; }
+}
+
+function productTile(p) {
+  const img = (p.images[0]||{}).image_url || '';
+  return `<div class="thumb" data-pid="${p.id}">
+    <img src="${img}" loading="lazy" onerror="this.style.opacity=0.2"/>
+    <div style="margin-top:6px">${p.name||''}</div>
+    <small class="muted">${money(p.price, p.currency)}${p.category? ' · '+p.category:''}</small>
+    ${p.needs_review ? '<div class="badge-rev">review</div>' : ''}
+    ${p.product_url ? `<div><a class="muted" href="${p.product_url}" target="_blank" rel="noopener"><small>source ↗</small></a></div>` : ''}
+    <button class="del" data-del="${p.id}">✕ Not a product</button>
+  </div>`;
 }
 
 // REVIEW

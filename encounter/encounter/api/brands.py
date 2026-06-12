@@ -429,6 +429,53 @@ def import_brand_get(
     )
 
 
+@router.get("/overview")
+def brands_overview(session: Session = Depends(get_session)) -> list[dict]:
+    """Per-brand rollup for the by-brand catalogue view: product count,
+    how many are flagged for review, and a sample thumbnail. Sorted by size."""
+    from sqlalchemy import case, func
+
+    from ..models import Image
+
+    sample = (
+        select(Image.image_url)
+        .join(Product, Product.id == Image.product_id)
+        .where(Product.brand_id == Brand.id, Image.image_url.is_not(None))
+        .order_by(Image.id)
+        .limit(1)
+        .correlate(Brand)
+        .scalar_subquery()
+    )
+    flagged = func.coalesce(
+        func.sum(case((Product.needs_review.is_(True), 1), else_=0)), 0
+    )
+    stmt = (
+        select(
+            Brand.id,
+            Brand.name,
+            Brand.website,
+            func.count(Product.id).label("products"),
+            flagged.label("needs_review"),
+            sample.label("sample"),
+        )
+        .join(Product, Product.brand_id == Brand.id, isouter=True)
+        .group_by(Brand.id, Brand.name, Brand.website)
+        .having(func.count(Product.id) > 0)
+        .order_by(func.count(Product.id).desc())
+    )
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "website": r.website,
+            "products": int(r.products),
+            "needs_review": int(r.needs_review),
+            "sample": r.sample,
+        }
+        for r in session.execute(stmt).all()
+    ]
+
+
 @router.get("", response_model=list[BrandOut])
 def list_brands(session: Session = Depends(get_session)) -> list[Brand]:
     return list(session.scalars(select(Brand).order_by(Brand.name)).all())
