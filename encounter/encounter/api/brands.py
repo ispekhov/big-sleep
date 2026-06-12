@@ -346,7 +346,11 @@ def import_brand(
     pipeline = ImportPipeline(
         session, fetcher=make_http_fetcher(), downloader=make_http_downloader()
     )
-    return pipeline.run(req.url, max_pages=req.max_pages)
+    # Defer image download/embedding so the (60s) request returns fast with the
+    # full product list; the /queue/embed worker fills in images afterward.
+    return pipeline.run(
+        req.url, max_pages=req.max_pages or 25, download_images=False
+    )
 
 
 @router.get("/import", response_model=ImportSummary)
@@ -359,7 +363,9 @@ def import_brand_get(
     pipeline = ImportPipeline(
         session, fetcher=make_http_fetcher(), downloader=make_http_downloader()
     )
-    return pipeline.run(url, max_pages=max_pages)
+    return pipeline.run(
+        url, max_pages=max_pages or 25, download_images=False
+    )
 
 
 @router.get("", response_model=list[BrandOut])
