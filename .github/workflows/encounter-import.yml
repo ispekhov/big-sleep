@@ -29,18 +29,14 @@ jobs:
               curl -s --max-time 75 "$BASE/brands/queue/run?budget_seconds=55&max_pages=10" -o /dev/null || true
             done
           }
-          # Launch parallel workers; SKIP LOCKED keeps them from colliding.
           for w in $(seq 1 "${WORKERS:-3}"); do worker & done
 
-          # Monitor progress and stop when the queue is drained.
           for t in $(seq 1 400); do
             sleep 20
             s=$(curl -s --max-time 30 "$BASE/brands/queue" || echo '{}')
-            read pend prod <<EOF
-          $(echo "$s" | python3 -c "import sys,json;d=json.load(sys.stdin);c=d.get('counts',{});print(c.get('pending',0)+c.get('running',0), d.get('total_products_imported',0))" 2>/dev/null || echo "1 0")
-          EOF
+            pend=$(printf '%s' "$s" | python3 -c "import sys,json;d=json.load(sys.stdin);c=d.get('counts',{});print(c.get('pending',0)+c.get('running',0))" 2>/dev/null || echo 1)
+            prod=$(printf '%s' "$s" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('total_products_imported',0))" 2>/dev/null || echo 0)
             echo "[tick $t] pending+running=$pend  total_products=$prod"
             if [ "$pend" = "0" ]; then echo "QUEUE DRAINED"; break; fi
           done
-          # Final snapshot
           curl -s "$BASE/brands/queue" | python3 -c "import sys,json;d=json.load(sys.stdin);print('FINAL counts:',d.get('counts'));print('total products:',d.get('total_products_imported'))" || true
