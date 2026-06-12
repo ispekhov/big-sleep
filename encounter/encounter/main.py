@@ -94,7 +94,11 @@ def create_app() -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def index() -> HTMLResponse:
-        return HTMLResponse(INDEX_HTML)
+        # No-store so a new deploy's UI is picked up immediately instead of a
+        # stale cached page (the console is a single inline HTML document).
+        return HTMLResponse(
+            INDEX_HTML, headers={"Cache-Control": "no-store, must-revalidate"}
+        )
 
     return app
 
