@@ -74,7 +74,10 @@ def queue_run(
                     "update brand_queue set status = case when attempts >= 3 "
                     "then 'failed_timeout' else 'pending' end, updated_at = now() "
                     "where status = 'running' "
-                    "and updated_at < now() - interval '150 seconds'"
+                    # Above the Firecrawl whole-site wait (~220s) and the
+                    # function ceiling (300s) so a long extract job isn't
+                    # recycled out from under a still-running worker.
+                    "and updated_at < now() - interval '290 seconds'"
                 )
             )
             session.commit()

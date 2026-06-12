@@ -330,3 +330,34 @@ def firecrawl_import(
         if ex is not None:
             products.append(ex)
     return products
+
+
+def firecrawl_extract_all(
+    start_url: str,
+    client: FirecrawlClient,
+    *,
+    max_wait: float = 220.0,
+    poll_interval: float = 6.0,
+) -> list[ExtractedProduct]:
+    """Whole-site extraction: ask Firecrawl for EVERY product in one job.
+
+    This is the right tool for relic / custom / WAF-blocked sites (Carl Hansen,
+    Martinelli Luce, Driade) where per-page scraping only reaches a handful.
+    Bounded by ``max_wait`` so it always fits inside the serverless function
+    limit; returns whatever the job produced (possibly empty) when time runs
+    out, leaving the caller free to fall back to per-page scraping.
+    """
+    import time
+
+    job_id = client.start_extract(start_url)
+    if not job_id:
+        return []
+    deadline = time.monotonic() + max_wait
+    while time.monotonic() < deadline:
+        status, products = client.poll_extract(job_id)
+        if status == "completed":
+            return products
+        if status in ("failed", "error"):
+            return []
+        time.sleep(poll_interval)
+    return []

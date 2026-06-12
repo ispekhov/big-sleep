@@ -13,7 +13,7 @@ from typing import Callable
 from urllib.parse import urlparse
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
@@ -26,7 +26,11 @@ from ..util import make_soup
 from ..vectorstore import VectorStore, get_vector_store
 from .crawler import Crawler, FetchedPage, Fetcher
 from .extractor import ExtractedProduct, extract_product
-from .firecrawl import firecrawl_import, get_firecrawl_client
+from .firecrawl import (
+    firecrawl_extract_all,
+    firecrawl_import,
+    get_firecrawl_client,
+)
 from .shopify import fetch_shopify_products
 
 ImageDownloader = Callable[[str], "DownloadedImage | None"]
@@ -39,13 +43,19 @@ class DownloadedImage:
     content_type: str = "image/jpeg"
 
 
+def _registrable_domain(url: str) -> str:
+    """Normalised host used as a brand's stable identity (drops www + port)."""
+    netloc = urlparse(url).netloc.lower()
+    return netloc.split(":")[0].removeprefix("www.")
+
+
 def _brand_name_from_site(start_url: str, homepage: FetchedPage | None) -> str:
     if homepage and homepage.html:
         soup = make_soup(homepage.html)
         tag = soup.find("meta", property="og:site_name")
         if tag and tag.get("content"):
             return tag["content"].strip()
-    host = urlparse(start_url).netloc.removeprefix("www.")
+    host = _registrable_domain(start_url)
     root = host.split(".")[0]
     return root.replace("-", " ").title()
 
@@ -80,6 +90,9 @@ class ImportPipeline:
         homepage = self.fetcher(start_url)
         brand_name = _brand_name_from_site(start_url, homepage)
         brand = self._get_or_create_brand(brand_name, start_url)
+        # Report the canonical brand name (which may differ from the per-page
+        # og:site_name when we merged into an existing brand by domain).
+        brand_name = brand.name
         source = self._get_or_create_source(brand_name, start_url)
 
         products_imported = 0
@@ -135,18 +148,23 @@ class ImportPipeline:
             _ingest(extracted)
 
         # Layer 4: Firecrawl fallback for JS-rendered / WAF-blocked sites that
-        # the free HTTP path couldn't read.
+        # the free HTTP path couldn't read. Whole-site extract first (gets the
+        # FULL catalogue of relic/custom sites in one job); fall back to
+        # per-page scraping only if the extract job came back empty.
         used_firecrawl = False
         if products_imported == 0:
             client = get_firecrawl_client()
             if client is not None:
                 used_firecrawl = True
-                for ex in firecrawl_import(
-                    start_url,
-                    client,
-                    max_products=self.settings.firecrawl_max_products,
-                ):
+                for ex in firecrawl_extract_all(start_url, client):
                     _ingest(ex)
+                if products_imported == 0:
+                    for ex in firecrawl_import(
+                        start_url,
+                        client,
+                        max_products=self.settings.firecrawl_max_products,
+                    ):
+                        _ingest(ex)
 
         self.session.commit()
         return ImportSummary(
@@ -164,7 +182,24 @@ class ImportPipeline:
 
     # --- persistence ------------------------------------------------------
     def _get_or_create_brand(self, name: str, website: str) -> Brand:
-        brand = self.session.scalar(select(Brand).where(Brand.name == name))
+        # Identity is the registrable domain, not the (page-dependent) name —
+        # so importing a brand's homepage and a deep shop URL like
+        # ".../usa/shop/?per_page=-1" merge into ONE brand instead of splitting
+        # into "Anglepoise" vs "Anglepoise USA".
+        domain = _registrable_domain(website)
+        # Require a "/" or "." right before the domain so "made.com" can't
+        # match "handmade.com".
+        brand = self.session.scalar(
+            select(Brand).where(
+                or_(
+                    Brand.website.ilike(f"%/{domain}%"),
+                    Brand.website.ilike(f"%.{domain}%"),
+                )
+            )
+        )
+        if brand is None:
+            # Fall back to an exact name match for legacy rows with no/odd URLs.
+            brand = self.session.scalar(select(Brand).where(Brand.name == name))
         if brand is None:
             brand = Brand(name=name, website=website)
             self.session.add(brand)
