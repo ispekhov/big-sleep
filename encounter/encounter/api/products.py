@@ -51,7 +51,7 @@ def list_products(
     brand_id: int | None = None,
     category: str | None = None,
     needs_review: bool | None = None,
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=2000),
     offset: int = Query(0, ge=0),
 ) -> list[Product]:
     stmt = select(Product).options(
