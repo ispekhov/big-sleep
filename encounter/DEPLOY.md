@@ -24,6 +24,48 @@ The perceptual embedder is a real visual descriptor (similar images → nearby
 vectors) so search works end-to-end, but it is a **baseline** — production
 recognition accuracy needs SigLIP/DINOv2 on a GPU host plus a VLM reranker.
 
+## Recognition accuracy & the match threshold
+
+The recogniser does **open-set recognition**: it only declares a match when the
+top candidate's calibrated confidence clears `ENCOUNTER_MATCH_THRESHOLD`
+(default `0.6`). Below it, search returns *no confident match* and the UI asks
+the user to label the photo — instead of snapping every photo to the nearest
+catalogue item. This is what makes a single-brand index behave correctly:
+
+- Photograph an **indexed** product → it matches.
+- Photograph **anything else** → "no match", not a false positive.
+
+A nearest-neighbour search always returns *something*, so this threshold — not
+the index — is what rejects out-of-catalogue photos. Two levers set how well it
+works:
+
+1. **Embedder.** The deterministic `fallback` embedder needs a very high
+   threshold to reject foreign images and still generalises poorly to new
+   photos of the same object. For production accuracy, run **SigLIP** on a GPU
+   host: `pip install "torch>=2.2" "transformers>=4.40"`, set
+   `ENCOUNTER_EMBEDDER_BACKEND=siglip`, and **re-index** (embeddings from a
+   different model are not comparable). SigLIP runs on CPU too, just slowly —
+   fine for a pilot, too slow for serverless request latency at scale.
+2. **Threshold.** Tune it per embedder with the eval harness:
+
+   ```bash
+   # Roll & Hill pilot: import just Roll & Hill first, then
+   python -m encounter.eval.threshold --brand "Roll & Hill"
+   # harden the reject side with real out-of-catalogue photos:
+   python -m encounter.eval.threshold --brand "Roll & Hill" --negatives ./foreign
+   ```
+
+   It sweeps thresholds over **positives** (catalogue images retrieving their
+   own product — leave-one-out for multi-image products, self-match otherwise)
+   and **negatives** (foreign photos via `--negatives`, else synthetic noise),
+   prints recall / precision / false-accept per threshold, and recommends the
+   lowest threshold with zero false accepts. Set that as
+   `ENCOUNTER_MATCH_THRESHOLD`.
+
+Acceptance test for the pilot: index only Roll & Hill, then a real Roll & Hill
+photo should be identified and any non-Roll & Hill photo should return "no
+match".
+
 ## What's already set up (Supabase project `encounter`, eu-north-1)
 
 Co-located in the existing `encounter` project under an **isolated schema** so

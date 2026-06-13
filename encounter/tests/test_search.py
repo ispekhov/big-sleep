@@ -55,3 +55,30 @@ def test_search_empty_index_returns_no_candidate(session):
     )
     result = service.search(make_jpeg(), store_query=False)
     assert result.top_candidate is None
+
+
+def test_search_rejects_below_threshold(session):
+    """Open-set rejection: a non-exact query is rejected when it cannot clear
+    the acceptance threshold, even though the index returns nearest hits."""
+    service = _setup(session)
+    service.match_threshold = 0.999  # only a near-perfect match would pass
+    # A fresh image that is not in the catalogue: hits exist (search always
+    # returns the nearest items) but none are confident enough.
+    result = service.search(make_jpeg(color=(12, 240, 90), seed=7), store_query=False)
+    assert result.top_candidate is None
+    assert result.candidates == []
+
+
+def test_search_accepts_exact_match_at_default_threshold(session):
+    """The same image used for a product clears the default threshold."""
+    service = _setup(session)  # default threshold from settings
+    result = service.search(IMAGES["https://cdn.x/melt.jpg"], store_query=False)
+    assert result.top_candidate is not None
+    assert result.top_candidate.confidence >= service.match_threshold
+
+
+def test_match_threshold_defaults_to_settings(session):
+    from encounter.config import get_settings
+
+    service = SearchService(session)
+    assert service.match_threshold == get_settings().match_threshold
