@@ -429,6 +429,32 @@ def import_brand_get(
     )
 
 
+@router.post("/normalize-names")
+def normalize_names(
+    brand_id: int | None = None, session: Session = Depends(get_session)
+) -> dict:
+    """Recompute precise product names from URL handles for existing products.
+
+    Generic storefront titles ("Cloud") become specific ("Cloud Pendant 14\"").
+    Renames in place; idempotent. ``brand_id`` scopes to one brand (the pilot);
+    omit it to normalise every brand.
+    """
+    from ..importer.naming import derive_product_name
+
+    stmt = select(Product)
+    if brand_id is not None:
+        stmt = stmt.where(Product.brand_id == brand_id)
+    prods = list(session.scalars(stmt).all())
+    renamed = 0
+    for p in prods:
+        new = derive_product_name(p.name, p.product_url)
+        if new and new != p.name:
+            p.name = new
+            renamed += 1
+    session.commit()
+    return {"scope": brand_id or "all", "products": len(prods), "renamed": renamed}
+
+
 @router.get("/overview")
 def brands_overview(session: Session = Depends(get_session)) -> list[dict]:
     """Per-brand rollup for the by-brand catalogue view: product count,

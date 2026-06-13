@@ -12,7 +12,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
@@ -130,9 +130,55 @@ def create_app() -> FastAPI:
             ).all()
         )
         return HTMLResponse(
-            render_brand_page(brand.name, brand.website, products),
+            render_brand_page(brand.id, brand.name, brand.website, products),
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.post("/b/{brand_id}/delete/{product_id}", include_in_schema=False)
+    def brand_delete_product(
+        brand_id: int, product_id: int, session: Session = Depends(get_session)
+    ) -> RedirectResponse:
+        from .models import Product
+
+        p = session.get(Product, product_id)
+        if p is not None and p.brand_id == brand_id:
+            session.delete(p)  # cascades images + variants
+            session.commit()
+        return RedirectResponse(f"/b/{brand_id}", status_code=303)
+
+    @app.post("/b/{brand_id}/purge-junk", include_in_schema=False)
+    def brand_purge_junk(
+        brand_id: int, session: Session = Depends(get_session)
+    ) -> RedirectResponse:
+        import re
+
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from .models import Product
+
+        junk = re.compile(
+            r"\b(home|search|video|news|project|projects|collection|collections|"
+            r"about|contact|privacy|terms|cookie|cart|account|login|sign in|menu|"
+            r"sitemap|faq|press|career|careers|store locator|showroom|newsletter|"
+            r"wishlist|checkout|azienda|codice|sede|progetti|eventi|"
+            r"personal assistant|euroluce)\b",
+            re.I,
+        )
+        prods = session.scalars(
+            select(Product)
+            .where(Product.brand_id == brand_id)
+            .options(selectinload(Product.images))
+        ).all()
+        for p in prods:
+            if p.price is not None:
+                continue  # priced items are almost certainly real products
+            imgs = [(i.image_url or "").lower() for i in p.images]
+            only_icons = bool(imgs) and all(u.endswith(".svg") for u in imgs)
+            if junk.search(p.name or "") or only_icons or not imgs:
+                session.delete(p)
+        session.commit()
+        return RedirectResponse(f"/b/{brand_id}", status_code=303)
 
     return app
 

@@ -16,6 +16,7 @@ import re
 from typing import Callable
 
 from .extractor import ExtractedProduct
+from .naming import derive_product_name
 
 _TAG_RE = re.compile(r"<[^>]+>")
 
@@ -61,13 +62,16 @@ def _to_product(node: dict, base: str) -> ExtractedProduct:
             }
         )
 
+    product_url = f"{base}/products/{handle}" if handle else None
     return ExtractedProduct(
-        name=node.get("title"),
+        # Generic Shopify titles ("Cloud") get sharpened using the handle
+        # ("cloud-pendant-14" → "Cloud Pendant 14\"").
+        name=derive_product_name(node.get("title"), product_url),
         category=node.get("product_type") or None,
         description=_strip_html(node.get("body_html")),
         sku=sku,
         price=price,
-        product_url=f"{base}/products/{handle}" if handle else None,
+        product_url=product_url,
         image_urls=images,
         variants=variant_rows,
     )
