@@ -97,7 +97,7 @@ class SearchService:
     def _to_candidate(self, cand: Candidate) -> SearchCandidate | None:
         product = self.session.scalar(
             select(Product)
-            .where(Product.id == cand.product_id)
+            .where(Product.id == cand.product_id, Product.deleted_at.is_(None))
             .options(selectinload(Product.brand), selectinload(Product.images))
         )
         if product is None:
@@ -129,7 +129,11 @@ class SearchService:
             return []
         stmt = (
             select(Product)
-            .where(Product.id != exclude, Product.brand_id == product.brand_id)
+            .where(
+                Product.id != exclude,
+                Product.brand_id == product.brand_id,
+                Product.deleted_at.is_(None),
+            )
             .options(selectinload(Product.brand), selectinload(Product.images))
             .limit(limit)
         )

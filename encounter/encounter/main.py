@@ -10,7 +10,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -101,13 +101,18 @@ def create_app() -> FastAPI:
             INDEX_HTML, headers={"Cache-Control": "no-store, must-revalidate"}
         )
 
+    def _redirect(brand_id: int, undo_ids: list[int]) -> RedirectResponse:
+        suffix = f"?undo={','.join(map(str, undo_ids))}" if undo_ids else ""
+        return RedirectResponse(f"/b/{brand_id}{suffix}", status_code=303)
+
     @app.get("/b/{brand_id}", include_in_schema=False)
     def brand_page(
-        brand_id: int, session: Session = Depends(get_session)
+        brand_id: int,
+        undo: str | None = None,
+        session: Session = Depends(get_session),
     ) -> HTMLResponse:
         # A standalone, server-rendered page for one brand's catalogue. Native
-        # HTML — no client JS needed to view products — reached via a normal
-        # link from the console's brand grid.
+        # HTML + forms — no client JS needed to view, select, delete, or undo.
         from sqlalchemy import select
         from sqlalchemy.orm import selectinload
 
@@ -124,26 +129,61 @@ def create_app() -> FastAPI:
         products = list(
             session.scalars(
                 select(Product)
-                .where(Product.brand_id == brand_id)
+                .where(Product.brand_id == brand_id, Product.deleted_at.is_(None))
                 .options(selectinload(Product.images))
                 .order_by(Product.name)
             ).all()
         )
+        undo_ids = [int(x) for x in (undo or "").split(",") if x.strip().isdigit()]
         return HTMLResponse(
-            render_brand_page(brand.id, brand.name, brand.website, products),
+            render_brand_page(
+                brand.id, brand.name, brand.website, products, undo_ids
+            ),
             headers={"Cache-Control": "no-store"},
         )
+
+    def _soft_delete(session, brand_id: int, ids: list[int]) -> list[int]:
+        from datetime import datetime, timezone
+
+        from .models import Product
+
+        done: list[int] = []
+        for pid in ids:
+            p = session.get(Product, pid)
+            if p is not None and p.brand_id == brand_id and p.deleted_at is None:
+                p.deleted_at = datetime.now(timezone.utc)
+                done.append(pid)
+        session.commit()
+        return done
 
     @app.post("/b/{brand_id}/delete/{product_id}", include_in_schema=False)
     def brand_delete_product(
         brand_id: int, product_id: int, session: Session = Depends(get_session)
     ) -> RedirectResponse:
+        return _redirect(brand_id, _soft_delete(session, brand_id, [product_id]))
+
+    @app.post("/b/{brand_id}/delete-selected", include_in_schema=False)
+    def brand_delete_selected(
+        brand_id: int,
+        ids: list[int] = Form(default=[]),
+        session: Session = Depends(get_session),
+    ) -> RedirectResponse:
+        return _redirect(brand_id, _soft_delete(session, brand_id, ids))
+
+    @app.post("/b/{brand_id}/restore", include_in_schema=False)
+    def brand_restore(
+        brand_id: int,
+        ids: str = Form(default=""),
+        session: Session = Depends(get_session),
+    ) -> RedirectResponse:
         from .models import Product
 
-        p = session.get(Product, product_id)
-        if p is not None and p.brand_id == brand_id:
-            session.delete(p)  # cascades images + variants
-            session.commit()
+        wanted = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+        for pid in wanted:
+            p = session.get(Product, pid)
+            if p is not None and p.brand_id == brand_id:
+                p.deleted_at = None
+        session.commit()
         return RedirectResponse(f"/b/{brand_id}", status_code=303)
 
     @app.post("/b/{brand_id}/purge-junk", include_in_schema=False)
@@ -167,18 +207,18 @@ def create_app() -> FastAPI:
         )
         prods = session.scalars(
             select(Product)
-            .where(Product.brand_id == brand_id)
+            .where(Product.brand_id == brand_id, Product.deleted_at.is_(None))
             .options(selectinload(Product.images))
         ).all()
+        victims: list[int] = []
         for p in prods:
             if p.price is not None:
                 continue  # priced items are almost certainly real products
             imgs = [(i.image_url or "").lower() for i in p.images]
             only_icons = bool(imgs) and all(u.endswith(".svg") for u in imgs)
             if junk.search(p.name or "") or only_icons or not imgs:
-                session.delete(p)
-        session.commit()
-        return RedirectResponse(f"/b/{brand_id}", status_code=303)
+                victims.append(p.id)
+        return _redirect(brand_id, _soft_delete(session, brand_id, victims))
 
     return app
 

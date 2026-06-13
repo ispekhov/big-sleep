@@ -9,23 +9,24 @@ from html import escape as _esc
 
 
 def render_brand_page(
-    brand_id: int, brand_name: str, website: str | None, products
+    brand_id: int,
+    brand_name: str,
+    website: str | None,
+    products,
+    undo_ids: list[int] | None = None,
 ) -> str:
     """A standalone, server-rendered page listing one brand's products.
 
-    Plain HTML + native forms — no JavaScript required to view, navigate, or
-    delete — so it works in every browser regardless of any client-side issue.
-    Each product shows its image, name, price, category, a link to the product
-    page on the brand site, and a Delete button. A header button bulk-removes
-    obvious non-product pages.
+    Plain HTML + native forms — no JavaScript required to view, navigate,
+    select, delete, or undo — so it works in every browser. Tick products and
+    press "Delete selected"; an Undo banner appears right after so a deletion
+    is reversible (deletes are soft — hidden, not destroyed).
     """
+    undo_ids = undo_ids or []
     cards = []
     for p in products:
         img = p.images[0].image_url if getattr(p, "images", None) else ""
-        if p.price is not None:
-            price = f"{p.currency or '$'}{p.price:,.0f}"
-        else:
-            price = "—"
+        price = f"{p.currency or '$'}{p.price:,.0f}" if p.price is not None else "—"
         cat = f" · {_esc(p.category)}" if p.category else ""
         review = '<span class="rev">needs review</span>' if p.needs_review else ""
         src = (
@@ -34,19 +35,15 @@ def render_brand_page(
             if p.product_url
             else ""
         )
-        delete = (
-            f'<form class="delf" method="post" action="/b/{brand_id}/delete/{p.id}" '
-            f"onsubmit=\"return confirm('Delete this product? It is removed from "
-            f"visual search too.')\"><button class=\"del\" type=\"submit\">"
-            f"Delete</button></form>"
-        )
         cards.append(
             '<div class="card">'
+            f'<input class="sel" type="checkbox" name="ids" value="{p.id}" '
+            f'form="delform" aria-label="Select product"/>'
             f'<img src="{_esc(img)}" loading="lazy" '
             'onerror="this.style.opacity=.12"/>'
             f'<div class="nm">{_esc(p.name or "Untitled")}</div>'
             f'<div class="meta">{_esc(price)}{cat}</div>'
-            f'{review}{src}{delete}</div>'
+            f'{review}{src}</div>'
         )
     grid = "\n".join(cards) or '<p class="muted">No products yet for this brand.</p>'
     site = (
@@ -58,9 +55,20 @@ def render_brand_page(
     purge = (
         f'<form method="post" action="/b/{brand_id}/purge-junk" style="margin:0" '
         f"onsubmit=\"return confirm('Remove obvious non-product pages "
-        f"(no price + page-like name or icon image)? This cannot be undone.')\">"
+        f"(no price + page-like name or icon image)? You can undo afterwards.')\">"
         f'<button class="purge" type="submit">Remove non-products</button></form>'
     )
+    undo = ""
+    if undo_ids:
+        ids_val = ",".join(str(i) for i in undo_ids)
+        undo = (
+            f'<div class="undobar">Removed {len(undo_ids)} '
+            f'product{"" if len(undo_ids) == 1 else "s"}. '
+            f'<form method="post" action="/b/{brand_id}/restore" '
+            f'style="display:inline;margin:0">'
+            f'<input type="hidden" name="ids" value="{ids_val}"/>'
+            f'<button class="undo" type="submit">Undo</button></form></div>'
+        )
     return f"""<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8" />
@@ -69,25 +77,30 @@ def render_brand_page(
 <style>
   * {{ box-sizing: border-box; }}
   body {{ margin:0; font:14px/1.5 system-ui,sans-serif; background:#0f1115; color:#e8eaed; }}
-  header {{ padding:18px 24px; border-bottom:1px solid #272b35; display:flex; flex-wrap:wrap; align-items:center; gap:14px; position:sticky; top:0; background:#0f1115; z-index:2; }}
+  header {{ padding:14px 24px; border-bottom:1px solid #272b35; display:flex; flex-wrap:wrap; align-items:center; gap:12px; position:sticky; top:0; background:#0f1115; z-index:2; }}
   header h1 {{ font-size:20px; margin:0; }}
   a {{ color:#6ea8fe; text-decoration:none; }}
   a:hover {{ text-decoration:underline; }}
   .muted {{ color:#9aa0aa; font-size:13px; }}
   .back {{ font-size:14px; }}
+  .spacer {{ flex:1; }}
   main {{ padding:24px; }}
   .grid {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:14px; }}
-  .card {{ border:1px solid #272b35; border-radius:10px; padding:10px; background:#181b22; display:flex; flex-direction:column; }}
+  .card {{ position:relative; border:1px solid #272b35; border-radius:10px; padding:10px; background:#181b22; display:flex; flex-direction:column; }}
   .card img {{ width:100%; height:170px; object-fit:cover; border-radius:7px; background:#000; }}
+  .sel {{ position:absolute; top:14px; left:14px; width:22px; height:22px; cursor:pointer; z-index:1; accent-color:#6ea8fe; }}
   .nm {{ margin-top:8px; font-weight:600; }}
   .meta {{ color:#9aa0aa; font-size:13px; margin-top:2px; }}
   .rev {{ display:inline-block; margin-top:6px; font-size:10px; padding:1px 6px; border-radius:99px; background:#3a2d12; color:#fbbf24; }}
   .src {{ margin-top:8px; font-size:13px; }}
-  .delf {{ margin-top:auto; padding-top:8px; }}
-  .del {{ width:100%; background:none; border:1px solid #272b35; color:#9aa0aa; border-radius:6px; padding:4px 7px; font-size:11px; cursor:pointer; }}
-  .del:hover {{ color:#f87171; border-color:#f87171; }}
-  .purge {{ background:#3a2d12; color:#fbbf24; border:1px solid #5b4a1d; border-radius:7px; padding:7px 12px; font-size:13px; cursor:pointer; margin-left:auto; }}
+  .btn {{ border-radius:7px; padding:7px 12px; font-size:13px; cursor:pointer; border:1px solid #272b35; }}
+  .del-sel {{ background:#dc2626; color:#fff; border:none; }}
+  .del-sel:hover {{ background:#ef4444; }}
+  .purge {{ background:#3a2d12; color:#fbbf24; border:1px solid #5b4a1d; border-radius:7px; padding:7px 12px; font-size:13px; cursor:pointer; }}
   .purge:hover {{ background:#4a3917; }}
+  .undobar {{ padding:10px 24px; background:#10261a; color:#86efac; border-bottom:1px solid #1d5b39; }}
+  .undo {{ background:none; border:1px solid #1d5b39; color:#86efac; border-radius:6px; padding:3px 10px; font-size:13px; cursor:pointer; margin-left:8px; }}
+  .undo:hover {{ background:#15351f; }}
 </style></head>
 <body>
 <header>
@@ -95,11 +108,21 @@ def render_brand_page(
   <h1>{_esc(brand_name)}</h1>
   <span class="muted">{len(products)} products</span>
   {site}
+  <span class="spacer"></span>
+  <label class="muted" style="display:flex;align-items:center;gap:5px">
+    <input type="checkbox" onclick="document.querySelectorAll('.sel').forEach(c=>c.checked=this.checked)"/> Select all
+  </label>
+  <button class="btn del-sel" type="submit" form="delform"
+    onclick="if(!document.querySelector('.sel:checked')){{alert('Tick some products first.');return false;}}return confirm('Delete the selected products? You can undo right after.');">
+    Delete selected</button>
   {purge}
 </header>
+{undo}
+<form id="delform" method="post" action="/b/{brand_id}/delete-selected">
 <main class="grid">
 {grid}
 </main>
+</form>
 </body></html>"""
 
 
