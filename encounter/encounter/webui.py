@@ -5,6 +5,83 @@ deployments where non-.py data files are not import-traced.
 Source of truth; encounter/static/index.html mirrors it for reference.
 """
 
+from html import escape as _esc
+
+
+def render_brand_page(brand_name: str, website: str | None, products) -> str:
+    """A standalone, server-rendered page listing one brand's products.
+
+    Plain HTML + native links — no JavaScript required to view it — so it works
+    in every browser regardless of any client-side issue. Each product shows its
+    image, name, price, category, and a link to the product page on the brand
+    site.
+    """
+    cards = []
+    for p in products:
+        img = p.images[0].image_url if getattr(p, "images", None) else ""
+        if p.price is not None:
+            price = f"{p.currency or '$'}{p.price:,.0f}"
+        else:
+            price = "—"
+        cat = f" · {_esc(p.category)}" if p.category else ""
+        review = '<span class="rev">needs review</span>' if p.needs_review else ""
+        src = (
+            f'<a class="src" href="{_esc(p.product_url)}" target="_blank" '
+            f'rel="noopener">View on site ↗</a>'
+            if p.product_url
+            else ""
+        )
+        cards.append(
+            '<div class="card">'
+            f'<img src="{_esc(img)}" loading="lazy" '
+            'onerror="this.style.opacity=.12"/>'
+            f'<div class="nm">{_esc(p.name or "Untitled")}</div>'
+            f'<div class="meta">{_esc(price)}{cat}</div>'
+            f'{review}{src}</div>'
+        )
+    grid = "\n".join(cards) or '<p class="muted">No products yet for this brand.</p>'
+    site = (
+        f'<a class="muted" href="{_esc(website)}" target="_blank" '
+        f'rel="noopener">{_esc(website)} ↗</a>'
+        if website
+        else ""
+    )
+    return f"""<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{_esc(brand_name)} — Encounter</title>
+<style>
+  * {{ box-sizing: border-box; }}
+  body {{ margin:0; font:14px/1.5 system-ui,sans-serif; background:#0f1115; color:#e8eaed; }}
+  header {{ padding:18px 24px; border-bottom:1px solid #272b35; display:flex; flex-wrap:wrap; align-items:baseline; gap:14px; position:sticky; top:0; background:#0f1115; }}
+  header h1 {{ font-size:20px; margin:0; }}
+  a {{ color:#6ea8fe; text-decoration:none; }}
+  a:hover {{ text-decoration:underline; }}
+  .muted {{ color:#9aa0aa; font-size:13px; }}
+  .back {{ font-size:14px; }}
+  main {{ padding:24px; }}
+  .grid {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:14px; }}
+  .card {{ border:1px solid #272b35; border-radius:10px; padding:10px; background:#181b22; display:flex; flex-direction:column; }}
+  .card img {{ width:100%; height:170px; object-fit:cover; border-radius:7px; background:#000; }}
+  .nm {{ margin-top:8px; font-weight:600; }}
+  .meta {{ color:#9aa0aa; font-size:13px; margin-top:2px; }}
+  .rev {{ display:inline-block; margin-top:6px; font-size:10px; padding:1px 6px; border-radius:99px; background:#3a2d12; color:#fbbf24; }}
+  .src {{ margin-top:8px; font-size:13px; }}
+</style></head>
+<body>
+<header>
+  <a class="back" href="/">← All brands</a>
+  <h1>{_esc(brand_name)}</h1>
+  <span class="muted">{len(products)} products</span>
+  {site}
+</header>
+<main class="grid">
+{grid}
+</main>
+</body></html>"""
+
+
 INDEX_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -305,7 +382,7 @@ function bindCorrection(imageId) {
 let catOverviewLoaded = false;
 const brandName = {};
 $('#cat-refresh').onclick = () => { catOverviewLoaded = false; loadCatalogue(); };
-$('#cat-brand').onchange = () => { if ($('#cat-brand').value) showBrand($('#cat-brand').value); };
+$('#cat-brand').onchange = () => { if ($('#cat-brand').value) location.href = '/b/' + $('#cat-brand').value; };
 $('#cat-back').onclick = (e) => { e.preventDefault(); showOverview(); };
 
 // Event delegation: one listener on the always-present containers, so clicks
@@ -348,11 +425,11 @@ async function loadCatalogue() {
       o.value = b.id; o.textContent = `${b.name} (${b.products})`; sel.appendChild(o);
     });
     $('#brand-cards').innerHTML = rows.length ? rows.map(b => `
-      <div class="thumb" role="button" tabindex="0" data-bid="${b.id}" style="cursor:pointer" onclick="showBrand('${b.id}')">
+      <a class="thumb" href="/b/${b.id}" style="cursor:pointer;display:block;color:inherit;text-decoration:none">
         <img src="${b.sample||''}" loading="lazy" onerror="this.style.opacity=0.15"/>
         <div style="margin-top:6px;font-weight:600">${b.name}</div>
         <small class="muted">${b.products} product${b.products===1?'':'s'}${b.needs_review?` · <span style="color:var(--warn)">${b.needs_review} to review</span>`:''}</small>
-      </div>`).join('') : '<p class="muted">No products yet — import a brand first.</p>';
+      </a>`).join('') : '<p class="muted">No products yet — import a brand first.</p>';
     catOverviewLoaded = true;  // clicks handled by delegation on #brand-cards
   } catch (e) { $('#brand-cards').innerHTML = `<p class="err">${e.message}</p>`; }
 }

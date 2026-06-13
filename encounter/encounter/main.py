@@ -10,15 +10,16 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.orm import Session
 
 from . import __version__
 from .api import brands, corrections, products, search
 from .config import get_settings
-from .db import init_db
+from .db import get_session, init_db
 from .vectorstore import get_vector_store
 from .webui import INDEX_HTML
 
@@ -98,6 +99,39 @@ def create_app() -> FastAPI:
         # stale cached page (the console is a single inline HTML document).
         return HTMLResponse(
             INDEX_HTML, headers={"Cache-Control": "no-store, must-revalidate"}
+        )
+
+    @app.get("/b/{brand_id}", include_in_schema=False)
+    def brand_page(
+        brand_id: int, session: Session = Depends(get_session)
+    ) -> HTMLResponse:
+        # A standalone, server-rendered page for one brand's catalogue. Native
+        # HTML — no client JS needed to view products — reached via a normal
+        # link from the console's brand grid.
+        from sqlalchemy import select
+        from sqlalchemy.orm import selectinload
+
+        from .models import Brand, Product
+        from .webui import render_brand_page
+
+        brand = session.get(Brand, brand_id)
+        if brand is None:
+            return HTMLResponse(
+                "<p style='font:16px system-ui;padding:24px'>Brand not found. "
+                "<a href='/'>← Back</a></p>",
+                status_code=404,
+            )
+        products = list(
+            session.scalars(
+                select(Product)
+                .where(Product.brand_id == brand_id)
+                .options(selectinload(Product.images))
+                .order_by(Product.name)
+            ).all()
+        )
+        return HTMLResponse(
+            render_brand_page(brand.name, brand.website, products),
+            headers={"Cache-Control": "no-store"},
         )
 
     return app
