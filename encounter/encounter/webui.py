@@ -59,15 +59,34 @@ def render_brand_page(
         f'<button class="purge" type="submit">Remove non-products</button></form>'
     )
     undo = ""
+    countdown_js = ""
     if undo_ids:
         ids_val = ",".join(str(i) for i in undo_ids)
+        n = len(undo_ids)
         undo = (
-            f'<div class="undobar">Removed {len(undo_ids)} '
-            f'product{"" if len(undo_ids) == 1 else "s"}. '
+            f'<div id="undobar" class="undobar" data-ids="{ids_val}" '
+            f'data-commit="/b/{brand_id}/commit-delete">'
+            f'Removed {n} product{"" if n == 1 else "s"}.'
             f'<form method="post" action="/b/{brand_id}/restore" '
-            f'style="display:inline;margin:0">'
+            f'style="display:inline;margin:0 0 0 10px">'
             f'<input type="hidden" name="ids" value="{ids_val}"/>'
-            f'<button class="undo" type="submit">Undo</button></form></div>'
+            f'<button class="undo" type="submit">Undo</button></form>'
+            f'<span class="muted" style="margin-left:10px">removing in '
+            f'<span id="undosec">10</span>s…</span></div>'
+        )
+        # Best-effort: after 10s with no Undo, permanently delete (Undo is a
+        # plain form submit that navigates away, cancelling this timer). If JS
+        # is unavailable the items simply stay hidden (still "deleted") — safe.
+        countdown_js = (
+            "<script>(function(){var b=document.getElementById('undobar');"
+            "if(!b)return;var ids=b.getAttribute('data-ids'),"
+            "url=b.getAttribute('data-commit'),n=10,"
+            "el=document.getElementById('undosec');"
+            "var t=setInterval(function(){n--;if(el)el.textContent=n>0?n:0;"
+            "if(n<=0){clearInterval(t);try{fetch(url,{method:'POST',headers:"
+            "{'Content-Type':'application/x-www-form-urlencoded'},"
+            "body:'ids='+encodeURIComponent(ids),keepalive:true});}catch(e){}"
+            "b.style.display='none';}},1000);})();</script>"
         )
     return f"""<!DOCTYPE html>
 <html lang="en"><head>
@@ -113,7 +132,7 @@ def render_brand_page(
     <input type="checkbox" onclick="document.querySelectorAll('.sel').forEach(c=>c.checked=this.checked)"/> Select all
   </label>
   <button class="btn del-sel" type="submit" form="delform"
-    onclick="if(!document.querySelector('.sel:checked')){{alert('Tick some products first.');return false;}}return confirm('Delete the selected products? You can undo right after.');">
+    onclick="if(!document.querySelector('.sel:checked')){{alert('Tick some products first.');return false;}}">
     Delete selected</button>
   {purge}
 </header>
@@ -123,6 +142,7 @@ def render_brand_page(
 {grid}
 </main>
 </form>
+{countdown_js}
 </body></html>"""
 
 

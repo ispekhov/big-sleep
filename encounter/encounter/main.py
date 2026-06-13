@@ -12,7 +12,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
@@ -185,6 +185,29 @@ def create_app() -> FastAPI:
                 p.deleted_at = None
         session.commit()
         return RedirectResponse(f"/b/{brand_id}", status_code=303)
+
+    @app.post("/b/{brand_id}/commit-delete", include_in_schema=False)
+    def brand_commit_delete(
+        brand_id: int,
+        ids: str = Form(default=""),
+        session: Session = Depends(get_session),
+    ) -> Response:
+        # Permanently remove rows that are STILL soft-deleted (the undo window
+        # elapsed without a restore). If Undo already cleared deleted_at, the
+        # guard below skips them. Best-effort; called by the page's 10s timer.
+        from .models import Product
+
+        wanted = [int(x) for x in ids.split(",") if x.strip().isdigit()]
+        for pid in wanted:
+            p = session.get(Product, pid)
+            if (
+                p is not None
+                and p.brand_id == brand_id
+                and p.deleted_at is not None
+            ):
+                session.delete(p)  # hard delete (cascades images + variants)
+        session.commit()
+        return Response(status_code=204)
 
     @app.post("/b/{brand_id}/purge-junk", include_in_schema=False)
     def brand_purge_junk(
