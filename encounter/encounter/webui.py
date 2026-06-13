@@ -8,13 +8,16 @@ Source of truth; encounter/static/index.html mirrors it for reference.
 from html import escape as _esc
 
 
-def render_brand_page(brand_name: str, website: str | None, products) -> str:
+def render_brand_page(
+    brand_id: int, brand_name: str, website: str | None, products
+) -> str:
     """A standalone, server-rendered page listing one brand's products.
 
-    Plain HTML + native links — no JavaScript required to view it — so it works
-    in every browser regardless of any client-side issue. Each product shows its
-    image, name, price, category, and a link to the product page on the brand
-    site.
+    Plain HTML + native forms — no JavaScript required to view, navigate, or
+    delete — so it works in every browser regardless of any client-side issue.
+    Each product shows its image, name, price, category, a link to the product
+    page on the brand site, and a Delete button. A header button bulk-removes
+    obvious non-product pages.
     """
     cards = []
     for p in products:
@@ -31,13 +34,19 @@ def render_brand_page(brand_name: str, website: str | None, products) -> str:
             if p.product_url
             else ""
         )
+        delete = (
+            f'<form class="delf" method="post" action="/b/{brand_id}/delete/{p.id}" '
+            f"onsubmit=\"return confirm('Delete this product? It is removed from "
+            f"visual search too.')\"><button class=\"del\" type=\"submit\">"
+            f"Delete</button></form>"
+        )
         cards.append(
             '<div class="card">'
             f'<img src="{_esc(img)}" loading="lazy" '
             'onerror="this.style.opacity=.12"/>'
             f'<div class="nm">{_esc(p.name or "Untitled")}</div>'
             f'<div class="meta">{_esc(price)}{cat}</div>'
-            f'{review}{src}</div>'
+            f'{review}{src}{delete}</div>'
         )
     grid = "\n".join(cards) or '<p class="muted">No products yet for this brand.</p>'
     site = (
@@ -45,6 +54,12 @@ def render_brand_page(brand_name: str, website: str | None, products) -> str:
         f'rel="noopener">{_esc(website)} ↗</a>'
         if website
         else ""
+    )
+    purge = (
+        f'<form method="post" action="/b/{brand_id}/purge-junk" style="margin:0" '
+        f"onsubmit=\"return confirm('Remove obvious non-product pages "
+        f"(no price + page-like name or icon image)? This cannot be undone.')\">"
+        f'<button class="purge" type="submit">Remove non-products</button></form>'
     )
     return f"""<!DOCTYPE html>
 <html lang="en"><head>
@@ -54,7 +69,7 @@ def render_brand_page(brand_name: str, website: str | None, products) -> str:
 <style>
   * {{ box-sizing: border-box; }}
   body {{ margin:0; font:14px/1.5 system-ui,sans-serif; background:#0f1115; color:#e8eaed; }}
-  header {{ padding:18px 24px; border-bottom:1px solid #272b35; display:flex; flex-wrap:wrap; align-items:baseline; gap:14px; position:sticky; top:0; background:#0f1115; }}
+  header {{ padding:18px 24px; border-bottom:1px solid #272b35; display:flex; flex-wrap:wrap; align-items:center; gap:14px; position:sticky; top:0; background:#0f1115; z-index:2; }}
   header h1 {{ font-size:20px; margin:0; }}
   a {{ color:#6ea8fe; text-decoration:none; }}
   a:hover {{ text-decoration:underline; }}
@@ -68,6 +83,11 @@ def render_brand_page(brand_name: str, website: str | None, products) -> str:
   .meta {{ color:#9aa0aa; font-size:13px; margin-top:2px; }}
   .rev {{ display:inline-block; margin-top:6px; font-size:10px; padding:1px 6px; border-radius:99px; background:#3a2d12; color:#fbbf24; }}
   .src {{ margin-top:8px; font-size:13px; }}
+  .delf {{ margin-top:auto; padding-top:8px; }}
+  .del {{ width:100%; background:none; border:1px solid #272b35; color:#9aa0aa; border-radius:6px; padding:4px 7px; font-size:11px; cursor:pointer; }}
+  .del:hover {{ color:#f87171; border-color:#f87171; }}
+  .purge {{ background:#3a2d12; color:#fbbf24; border:1px solid #5b4a1d; border-radius:7px; padding:7px 12px; font-size:13px; cursor:pointer; margin-left:auto; }}
+  .purge:hover {{ background:#4a3917; }}
 </style></head>
 <body>
 <header>
@@ -75,6 +95,7 @@ def render_brand_page(brand_name: str, website: str | None, products) -> str:
   <h1>{_esc(brand_name)}</h1>
   <span class="muted">{len(products)} products</span>
   {site}
+  {purge}
 </header>
 <main class="grid">
 {grid}
