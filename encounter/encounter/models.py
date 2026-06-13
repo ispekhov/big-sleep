@@ -92,6 +92,9 @@ class Product(Base, TimestampMixin):
     )
     # True when the importer could not confidently extract required fields.
     needs_review: Mapped[bool] = mapped_column(default=False, index=True)
+    # Soft delete: set when a user removes a product (so it can be undone).
+    # Non-null rows are hidden from the catalogue, search, and counts.
+    deleted_at: Mapped[datetime | None] = mapped_column(index=True, default=None)
 
     brand: Mapped[Brand] = relationship(back_populates="products")
     source: Mapped[Source | None] = relationship(back_populates="products")

@@ -218,7 +218,7 @@ def review_product_queue(
     """Products the importer flagged as needing review."""
     stmt = (
         select(Product)
-        .where(Product.needs_review.is_(True))
+        .where(Product.needs_review.is_(True), Product.deleted_at.is_(None))
         .options(
             selectinload(Product.brand),
             selectinload(Product.images),

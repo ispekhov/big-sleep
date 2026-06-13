@@ -385,7 +385,9 @@ def import_progress(
         return {"domain": domain, "products": 0, "images": 0, "needs_review": 0}
     products = (
         session.scalar(
-            select(func.count(Product.id)).where(Product.brand_id.in_(brand_ids))
+            select(func.count(Product.id)).where(
+                Product.brand_id.in_(brand_ids), Product.deleted_at.is_(None)
+            )
         )
         or 0
     )
@@ -466,7 +468,11 @@ def brands_overview(session: Session = Depends(get_session)) -> list[dict]:
     sample = (
         select(Image.image_url)
         .join(Product, Product.id == Image.product_id)
-        .where(Product.brand_id == Brand.id, Image.image_url.is_not(None))
+        .where(
+            Product.brand_id == Brand.id,
+            Product.deleted_at.is_(None),
+            Image.image_url.is_not(None),
+        )
         .order_by(Image.id)
         .limit(1)
         .correlate(Brand)
@@ -484,7 +490,11 @@ def brands_overview(session: Session = Depends(get_session)) -> list[dict]:
             flagged.label("needs_review"),
             sample.label("sample"),
         )
-        .join(Product, Product.brand_id == Brand.id, isouter=True)
+        .join(
+            Product,
+            (Product.brand_id == Brand.id) & (Product.deleted_at.is_(None)),
+            isouter=True,
+        )
         .group_by(Brand.id, Brand.name, Brand.website)
         .having(func.count(Product.id) > 0)
         .order_by(func.count(Product.id).desc())

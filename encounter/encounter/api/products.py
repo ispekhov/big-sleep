@@ -54,7 +54,7 @@ def list_products(
     limit: int = Query(50, ge=1, le=2000),
     offset: int = Query(0, ge=0),
 ) -> list[Product]:
-    stmt = select(Product).options(
+    stmt = select(Product).where(Product.deleted_at.is_(None)).options(
         selectinload(Product.brand),
         selectinload(Product.images),
         selectinload(Product.variants),
