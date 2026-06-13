@@ -64,6 +64,7 @@ INDEX_HTML = """<!DOCTYPE html>
 <header>
   <h1>Encounter</h1><span id="health">Product Recognition Console</span>
 </header>
+<div id="errbar" style="display:none;background:#3a1212;color:#f9a8a8;padding:8px 24px;font-size:13px;border-bottom:1px solid #5b1d1d;"></div>
 <nav>
   <button data-tab="import" class="active">Brand Import</button>
   <button data-tab="catalogue">Catalogue</button>
@@ -133,6 +134,14 @@ INDEX_HTML = """<!DOCTYPE html>
 
 <script>
 const $ = (s) => document.querySelector(s);
+// Surface any runtime error on-screen (so issues are visible without a console).
+function showErr(msg) {
+  const b = document.getElementById('errbar');
+  if (b) { b.style.display = 'block'; b.textContent = String(msg); }
+}
+window.addEventListener('error', (e) => showErr('Error: ' + (e.message || e.error)));
+window.addEventListener('unhandledrejection', (e) =>
+  showErr('Error: ' + ((e.reason && e.reason.message) || e.reason)));
 const api = (p, opt) => fetch(p, opt).then(async r => {
   const body = await r.json().catch(() => ({}));
   if (!r.ok) {
@@ -339,7 +348,7 @@ async function loadCatalogue() {
       o.value = b.id; o.textContent = `${b.name} (${b.products})`; sel.appendChild(o);
     });
     $('#brand-cards').innerHTML = rows.length ? rows.map(b => `
-      <div class="thumb" data-bid="${b.id}" style="cursor:pointer">
+      <div class="thumb" role="button" tabindex="0" data-bid="${b.id}" style="cursor:pointer" onclick="showBrand('${b.id}')">
         <img src="${b.sample||''}" loading="lazy" onerror="this.style.opacity=0.15"/>
         <div style="margin-top:6px;font-weight:600">${b.name}</div>
         <small class="muted">${b.products} product${b.products===1?'':'s'}${b.needs_review?` · <span style="color:var(--warn)">${b.needs_review} to review</span>`:''}</small>
