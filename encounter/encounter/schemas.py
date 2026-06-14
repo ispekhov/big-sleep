@@ -76,6 +76,23 @@ class ImportSummary(BaseModel):
     message: str = "Ready for visual search"
 
 
+# --- Batch queue ---------------------------------------------------------
+class BrandQueueItem(BaseModel):
+    url: str
+    name: str | None = None
+
+
+class BrandEnqueueRequest(BaseModel):
+    brands: list[BrandQueueItem] = Field(default_factory=list)
+
+
+class BrandEnqueueResult(BaseModel):
+    added: int
+    skipped_existing: int
+    invalid: list[str] = Field(default_factory=list)
+    pending: int
+
+
 # --- Search --------------------------------------------------------------
 class SearchCandidate(BaseModel):
     product_id: int
