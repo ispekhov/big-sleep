@@ -28,6 +28,7 @@ class SearchService:
         detector: ObjectDetector | None = None,
         reranker: Reranker | None = None,
         storage: ObjectStorage | None = None,
+        match_threshold: float | None = None,
     ) -> None:
         self.session = session
         self.embedder = embedder or get_embedder()
@@ -36,6 +37,11 @@ class SearchService:
         self.reranker = reranker or get_reranker()
         self.storage = storage or get_storage()
         self.settings = get_settings()
+        self.match_threshold = (
+            match_threshold
+            if match_threshold is not None
+            else self.settings.match_threshold
+        )
 
     def search(
         self, image_bytes: bytes, *, store_query: bool = True
@@ -85,6 +91,14 @@ class SearchService:
             return SearchResponse(query_image_id=query_image_id)
 
         top = candidates[0]
+
+        # Open-set rejection: only surface a match when the best candidate is
+        # confident enough. Below the threshold there is no real match — the
+        # photo is treated as "not a product we know" rather than snapped to
+        # the nearest catalogue item, and the UI asks the user to label it.
+        if top.confidence < self.match_threshold:
+            return SearchResponse(query_image_id=query_image_id)
+
         similar = self._similar_products(top.product_id, exclude=top.product_id)
         return SearchResponse(
             query_image_id=query_image_id,

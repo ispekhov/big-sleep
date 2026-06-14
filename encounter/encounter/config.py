@@ -96,6 +96,14 @@ class Settings(BaseSettings):
     # --- Search -----------------------------------------------------------
     search_top_k: int = 10
     search_rerank_k: int = 5
+    # Acceptance threshold for open-set recognition. The top candidate is only
+    # surfaced as a match when its calibrated confidence is >= this value;
+    # below it the search returns "no confident match" (the UI then asks the
+    # user to label the photo). This is what makes a single-brand index behave
+    # correctly: a photo of an indexed product matches, anything else is
+    # rejected instead of snapping to the nearest catalogue item. Tune per
+    # embedder with ``python -m encounter.eval.threshold``.
+    match_threshold: float = 0.6
 
     def ensure_dirs(self) -> None:
         # Only needed for the local dev profile (SQLite / local-disk storage).

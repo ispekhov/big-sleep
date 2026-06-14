@@ -228,6 +228,17 @@ INDEX_HTML = """<!DOCTYPE html>
       <button class="go" id="import-go">Import</button>
       <div id="import-out"></div>
     </div>
+
+    <div class="panel">
+      <h2>Bulk add to import queue</h2>
+      <p class="muted">One brand website per line — or <code>url, Brand Name</code>. Queued brands are imported one at a time by the batch engine.</p>
+      <textarea id="bulk-urls" rows="6" style="width:100%;box-sizing:border-box;font:13px ui-monospace,monospace;background:#0e0e12;color:#eee;border:1px solid #2a2a33;border-radius:8px;padding:10px" placeholder="https://www.rollandhill.com&#10;https://www.gubi.com, Gubi"></textarea>
+      <div class="row" style="margin-top:8px">
+        <div><button class="go" id="bulk-go" style="margin-top:0">Add to queue</button></div>
+        <div><button class="go" id="queue-run" style="margin-top:0;background:#333">Process queue now</button></div>
+      </div>
+      <div id="bulk-out"></div>
+    </div>
   </section>
 
   <!-- CATALOGUE -->
@@ -359,6 +370,48 @@ $('#import-go').onclick = async () => {
     polling = false;
     $('#import-out').innerHTML = `<p class="err">${e.message}</p>
       <p class="muted">The import may still be running server-side — check the Catalogue in a minute.</p>`;
+  } finally { btn.disabled = false; }
+};
+
+// BULK ENQUEUE — add many brands to the import queue at once.
+function parseBulk(text) {
+  return text.split('\n').map(l => l.trim())
+    .filter(l => l && !l.startsWith('#'))
+    .map(l => {
+      const i = l.indexOf(',');
+      return i === -1 ? { url: l } : { url: l.slice(0, i).trim(), name: l.slice(i + 1).trim() };
+    });
+}
+$('#bulk-go').onclick = async () => {
+  const brands = parseBulk($('#bulk-urls').value);
+  if (!brands.length) { $('#bulk-out').innerHTML = '<p class="muted">Paste at least one URL.</p>'; return; }
+  const btn = $('#bulk-go'); btn.disabled = true;
+  $('#bulk-out').innerHTML = '<p class="muted">Adding…</p>';
+  try {
+    const r = await api('/brands/queue', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ brands }),
+    });
+    let html = `<p class="ok">Added ${r.added} · skipped ${r.skipped_existing} already queued · ${r.pending} pending total</p>`;
+    if (r.invalid && r.invalid.length)
+      html += `<p class="err">Ignored ${r.invalid.length} invalid line(s).</p>`;
+    html += '<p class="muted">Press <b>Process queue now</b> to start importing, or run the encounter-import workflow.</p>';
+    $('#bulk-out').innerHTML = html;
+  } catch (e) {
+    $('#bulk-out').innerHTML = `<p class="err">${e.message}</p>`;
+  } finally { btn.disabled = false; }
+};
+$('#queue-run').onclick = async () => {
+  const btn = $('#queue-run'); btn.disabled = true;
+  $('#bulk-out').innerHTML = '<p class="muted">Processing queue…</p>';
+  try {
+    const r = await api('/brands/queue/run?budget_seconds=30&max_pages=10');
+    const done = (r.items || []).map(i => `${i.name || '?'} → ${i.status} (${i.products})`).join('<br>');
+    $('#bulk-out').innerHTML = `<p class="ok">Processed ${r.processed} brand(s).</p>`
+      + (done ? `<p class="muted">${done}</p>` : '')
+      + '<p class="muted">Re-press to continue; check the <a href="/brands/queue" target="_blank">queue status</a> or Catalogue.</p>';
+  } catch (e) {
+    $('#bulk-out').innerHTML = `<p class="err">${e.message}</p>`;
   } finally { btn.disabled = false; }
 };
 

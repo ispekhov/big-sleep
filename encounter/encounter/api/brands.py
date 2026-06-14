@@ -13,9 +13,36 @@ from ..importer.pipeline import (
     make_http_fetcher,
 )
 from ..models import Brand, BrandQueue, Product
-from ..schemas import BrandOut, ImportRequest, ImportSummary, ProductOut
+from ..queueing import enqueue_brands
+from ..schemas import (
+    BrandEnqueueRequest,
+    BrandEnqueueResult,
+    BrandOut,
+    ImportRequest,
+    ImportSummary,
+    ProductOut,
+)
 
 router = APIRouter(prefix="/brands", tags=["brands"])
+
+
+@router.post("/queue", response_model=BrandEnqueueResult)
+def enqueue_queue(
+    req: BrandEnqueueRequest, session: Session = Depends(get_session)
+) -> BrandEnqueueResult:
+    """Bulk-add brand websites to the import queue.
+
+    De-duplicates (normalised URL) within the request and against rows already
+    queued, so a list can be re-submitted to add only what's new. The batch
+    engine (``/brands/queue/run``) then imports them one brand at a time.
+    """
+    result = enqueue_brands(session, [(b.url, b.name) for b in req.brands])
+    return BrandEnqueueResult(
+        added=result.added,
+        skipped_existing=result.skipped_existing,
+        invalid=result.invalid,
+        pending=result.pending,
+    )
 
 
 @router.get("/queue")
