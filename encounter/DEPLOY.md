@@ -55,6 +55,10 @@ works:
    (SigLIP runs on CPU too, just slowly — fine for a pilot, too slow for
    serverless request latency at scale. For durable pgvector/qdrant indexes,
    recreate the collection at the new dimension first.)
+
+   To validate real-photo recognition on CPU with one command (no GPU, any host
+   with internet), run `bash scripts/siglip_poc.sh` — it installs CPU torch +
+   transformers, switches to SigLIP, and prints the import / tune / test steps.
 2. **Threshold.** Tune it per embedder with the eval harness:
 
    ```bash
