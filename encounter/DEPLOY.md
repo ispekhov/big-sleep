@@ -43,9 +43,18 @@ works:
    threshold to reject foreign images and still generalises poorly to new
    photos of the same object. For production accuracy, run **SigLIP** on a GPU
    host: `pip install "torch>=2.2" "transformers>=4.40"`, set
-   `ENCOUNTER_EMBEDDER_BACKEND=siglip`, and **re-index** (embeddings from a
-   different model are not comparable). SigLIP runs on CPU too, just slowly —
-   fine for a pilot, too slow for serverless request latency at scale.
+   `ENCOUNTER_EMBEDDER_BACKEND=siglip` and `ENCOUNTER_EMBEDDING_DIM=768`, then
+   **re-fingerprint the catalogue** (old vectors are from a different model and
+   are not comparable):
+
+   ```bash
+   python -m encounter.reindex --embed                      # whole catalogue
+   python -m encounter.reindex --embed --brand "Roll & Hill"
+   ```
+
+   (SigLIP runs on CPU too, just slowly — fine for a pilot, too slow for
+   serverless request latency at scale. For durable pgvector/qdrant indexes,
+   recreate the collection at the new dimension first.)
 2. **Threshold.** Tune it per embedder with the eval harness:
 
    ```bash
