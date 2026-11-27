@@ -1,0 +1,8 @@
+{
+  "name": "ashfall",
+  "version": "1.0.0",
+  "description": "ASHFALL — a couch 1v1 fighting game: big screen as the arena, phones as controllers.",
+  "private": true,
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}
