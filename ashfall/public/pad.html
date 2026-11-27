@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0d0a12">
+<title>ASHFALL Controller</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d0a12; color: #fff; font-family: -apple-system, 'Helvetica Neue', Arial, sans-serif; touch-action: none; overscroll-behavior: none; }
+  body { position: fixed; inset: 0; --pc: #888; }
+  #pad { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr minmax(120px, 26vw) 1fr; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  #left, #right { position: relative; display: flex; align-items: center; justify-content: center; }
+  #stick { position: relative; width: min(42vw, 82vh); aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle, #2a2436 0%, #17131f 70%); border: 3px solid #3a3248; }
+  #stick i { position: absolute; font-style: normal; font-size: min(7vw, 13vh); color: #6c6480; transform: translate(-50%, -50%); }
+  #stick i.on { color: #fff; text-shadow: 0 0 14px var(--pc); }
+  #stick i[data-d="4"] { left: 50%; top: 15%; }
+  #stick i[data-d="8"] { left: 50%; top: 85%; }
+  #stick i[data-d="1"] { left: 15%; top: 50%; }
+  #stick i[data-d="2"] { left: 85%; top: 50%; }
+  #knob { position: absolute; left: 50%; top: 50%; width: 34%; aspect-ratio: 1; border-radius: 50%; background: var(--pc); opacity: .85; transform: translate(-50%, -50%); box-shadow: 0 4px 14px rgba(0,0,0,.6); pointer-events: none; }
+  #btns { display: grid; grid-template-columns: 1fr 1fr; gap: min(2vw, 4vh); width: min(34vw, 88vh); }
+  .b { aspect-ratio: 1.15; border-radius: 22%; border: 3px solid rgba(255,255,255,.25); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: min(3.3vw, 6vh); letter-spacing: .04em; color: #fff; }
+  .b.on { filter: brightness(1.7); transform: scale(.94); }
+  .b[data-b="64"] { background: #2d4a7a; }
+  .b[data-b="128"] { background: #7a3fb5; }
+  .b[data-b="16"] { background: #b5341f; }
+  .b[data-b="32"] { background: #b5761f; }
+  #mid { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 6px; gap: 8px; min-width: 0; }
+  #who { font-weight: 900; font-size: min(5vw, 9vh); color: var(--pc); }
+  #title { font-weight: 900; font-size: min(2.6vw, 5.2vh); line-height: 1.15; }
+  #sub { font-size: min(1.7vw, 3.6vh); opacity: .75; line-height: 1.25; }
+  #conn { font-size: min(1.5vw, 3vh); opacity: .6; }
+  #rotate { position: absolute; inset: 0; display: none; background: #0d0a12; align-items: center; justify-content: center; flex-direction: column; font-size: 6vw; font-weight: 900; text-align: center; gap: 4vw; z-index: 5; }
+  #rotate span { font-size: 22vw; }
+  @media (orientation: portrait) { #rotate { display: flex; } }
+</style>
+</head>
+<body>
+<div id="pad">
+  <div id="left"><div id="stick"><i data-d="4">▲</i><i data-d="8">▼</i><i data-d="1">◀</i><i data-d="2">▶</i><div id="knob"></div></div></div>
+  <div id="mid"><div id="who">—</div><div id="title">Connecting…</div><div id="sub"></div><div id="conn"></div></div>
+  <div id="right"><div id="btns">
+    <div class="b" data-b="64">BLOCK</div><div class="b" data-b="128">SPECIAL</div>
+    <div class="b" data-b="16">PUNCH</div><div class="b" data-b="32">KICK</div>
+  </div></div>
+</div>
+<div id="rotate"><span>↻</span>Turn your phone sideways</div>
+<script>
+'use strict';
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const stick = $('stick'), knob = $('knob'), btns = Array.from(document.querySelectorAll('.b')), arrows = Array.from(stick.querySelectorAll('i'));
+  const q = new URLSearchParams(location.search);
+  let id;
+  try { id = localStorage.getItem('ashfall-id'); if (!id) { id = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('ashfall-id', id); } } catch (e) { id = Math.random().toString(36).slice(2); }
+
+  // ---- connection ----
+  let ws = null, bits = 0, sent = -1, dead = false;
+  function connect() {
+    const sock = ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws?role=pad&room=' + (q.get('r') || '') + '&id=' + id);
+    ws.onopen = () => { sent = -1; $('conn').textContent = ''; push(); };
+    ws.onmessage = (e) => {
+      const m = JSON.parse(e.data);
+      if (m.t === 'slot') {
+        $('who').textContent = 'P' + (m.s + 1);
+        document.body.style.setProperty('--pc', m.s ? '#4aa8ff' : '#ff5340');
+      } else if (m.t === 'ui') { $('title').textContent = m.title; $('sub').textContent = m.sub; }
+      else if (m.t === 'err') {
+        if (m.m === 'full') { dead = true; $('who').textContent = '✕'; $('title').textContent = 'Two players are already connected'; $('sub').textContent = 'Reload this page when a seat frees up.'; }
+        else if (m.m === 'noroom') { $('title').textContent = 'Looking for the game…'; $('sub').textContent = 'Open the game on the big screen, then scan its QR code.'; }
+        else if (m.m === 'noscreen') { $('title').textContent = 'Waiting for the big screen…'; $('sub').textContent = ''; }
+      }
+    };
+    ws.onclose = () => { if (!dead && ws === sock) { $('conn').textContent = 'reconnecting…'; setTimeout(connect, 700); } };
+  }
+  function push() {
+    if (ws && ws.readyState === 1 && bits !== sent) { ws.send('{"b":' + bits + '}'); sent = bits; }
+  }
+  setInterval(() => { sent = -1; push(); }, 1000); // heal any lost state + keep the socket alive
+
+  // ---- touch input ----
+  const owner = new Map(); // touch id -> 'stick' | 'btn'
+  function compute(touches) {
+    let b = 0, kx = 0, ky = 0;
+    const sr = stick.getBoundingClientRect(), cx = sr.left + sr.width / 2, cy = sr.top + sr.height / 2, R = sr.width / 2;
+    for (const t of touches) {
+      const kind = owner.get(t.identifier);
+      if (kind === 'stick') {
+        const dx = t.clientX - cx, dy = t.clientY - cy, d = Math.hypot(dx, dy);
+        const k = Math.min(1, d / (R * 0.62));
+        kx = (dx / (d || 1)) * k * R * 0.62; ky = (dy / (d || 1)) * k * R * 0.62;
+        if (d > R * 0.24) {
+          const a = Math.atan2(dy, dx) * 180 / Math.PI; // 0 = right, 90 = down
+          if (a > -67.5 && a < 67.5) b |= 2;
+          if (a > 112.5 || a < -112.5) b |= 1;
+          if (a > 22.5 && a < 157.5) b |= 8;
+          if (a < -22.5 && a > -157.5) b |= 4;
+        }
+      } else if (kind === 'btn') {
+        for (const el of btns) {
+          const r = el.getBoundingClientRect(), pad = 10;
+          if (t.clientX > r.left - pad && t.clientX < r.right + pad && t.clientY > r.top - pad && t.clientY < r.bottom + pad) { b |= +el.dataset.b; break; }
+        }
+      }
+    }
+    knob.style.transform = 'translate(calc(-50% + ' + kx + 'px), calc(-50% + ' + ky + 'px))';
+    arrows.forEach((el) => el.classList.toggle('on', !!(b & +el.dataset.d)));
+    btns.forEach((el) => el.classList.toggle('on', !!(b & +el.dataset.b)));
+    if ((b & ~bits) && navigator.vibrate) navigator.vibrate(8);
+    bits = b; push();
+  }
+  function onTouch(e) {
+    e.preventDefault();
+    if (e.type === 'touchstart') {
+      for (const t of e.changedTouches) owner.set(t.identifier, t.clientX < innerWidth * 0.45 ? 'stick' : t.clientX > innerWidth * 0.55 ? 'btn' : 'none');
+      wake();
+    } else if (e.type !== 'touchmove') {
+      for (const t of e.changedTouches) owner.delete(t.identifier);
+    }
+    compute(e.touches);
+  }
+  ['touchstart', 'touchmove', 'touchend', 'touchcancel'].forEach((n) => document.addEventListener(n, onTouch, { passive: false }));
+  ['gesturestart', 'gesturechange', 'contextmenu', 'dblclick'].forEach((n) => document.addEventListener(n, (e) => e.preventDefault()));
+
+  // Mouse fallback so the pad can be tried from a desktop browser.
+  let mdown = false;
+  const fake = (e) => [{ identifier: 'm', clientX: e.clientX, clientY: e.clientY }];
+  document.addEventListener('mousedown', (e) => { mdown = true; owner.set('m', e.clientX < innerWidth * 0.45 ? 'stick' : 'btn'); compute(fake(e)); });
+  document.addEventListener('mousemove', (e) => { if (mdown) compute(fake(e)); });
+  document.addEventListener('mouseup', () => { mdown = false; owner.delete('m'); compute([]); });
+
+  // Keep the phone awake while playing.
+  let lock = null;
+  async function wake() {
+    try { if (!lock && navigator.wakeLock) { lock = await navigator.wakeLock.request('screen'); lock.addEventListener('release', () => { lock = null; }); } } catch (e) { /* not supported */ }
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wake(); else { bits = 0; push(); } });
+
+  connect();
+})();
+</script>
+</body>
+</html>
